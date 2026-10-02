@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#121212" />
+    <title>Play — Exst Arcade</title>
+    <meta
+      name="description"
+      content="Game player page with a back arrow and full-screen style frame."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Exst Arcade" />
+    <meta property="og:title" content="Play — Exst Arcade" />
+    <meta
+      property="og:description"
+      content="Press play. The game opens right here."
+    />
+    <link
+      rel="icon"
+      href="assets/images/favicon.svg"
+      type="image/svg+xml"
+    />
+    <link
+      rel="apple-touch-icon"
+      href="assets/images/favicon.svg"
+    />
+    <link rel="stylesheet" href="assets/css/arcade.css" />
+    <link rel="stylesheet" href="assets/css/flix.css" />
+  </head>
+  <body class="player-body">
+    <noscript>
+      <p style="padding: 1rem; text-align: center">
+        The game player needs JavaScript. Please enable JavaScript and reload
+        this page.
+      </p>
+    </noscript>
+    <header class="player-bar">
+      <a
+        id="backLink"
+        class="back-button"
+        href="../index.html"
+        aria-label="Back to arcade"
+        >←</a
+      >
+      <a class="flix-mini-logo" href="../index.html">ExstArcade</a>
+      <div class="player-title">
+        <h1 id="gameTitle">Loading game…</h1><span id="gameMeta"></span>
+      </div>
+      <div class="player-actions">
+        <button id="fullscreenGame" type="button">Fullscreen</button>
+        <button id="reloadGame" type="button">Reload</button>
+        <a id="openDirect" target="_blank" rel="noopener">Open new tab</a>
+      </div>
+    </header>
+    <main class="game-shell">
+      <!-- Populated when a catalog edit needs attention (see config-loader.js). -->
+      <div id="gameNotice"></div>
+      <iframe
+        id="gameFrame"
+        title="Game frame"
+        allow="fullscreen; gamepad; autoplay; clipboard-read; clipboard-write"
+        allowfullscreen
+      ></iframe>
+      <section id="gameFallback" class="frame-fallback" hidden>
+        <h1>That game file is missing</h1>
+        <p>
+          The catalog points at the file below (relative to the
+          <code>website/</code> folder), but it is not there. Drop the game
+          file in that spot, or fix the <code>path=</code> line in
+          <code>data/games.js</code>.
+        </p>
+        <code id="missingPath"></code>
+      </section>
+    </main>
+    <script src="data/games.js"></script>
+    <script src="assets/js/config-loader.js"></script>
+    <script src="assets/js/game.js"></script>
+  </body>
+</html>
