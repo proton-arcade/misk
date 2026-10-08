@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Build a DLS 2.1.6 project containing the clock-free MISK-16 manual-step core.
+"""Build the clocked raw-NAND MISK-16 computer and reusable combinational chips.
 
-The generated DLS project is combinational. All machine state is presented as
-editable IN chips and returned as NEXT outputs; no clock, pulse, feedback store,
-ROM, bus, or tri-state component is used. Program/data RAM remain external
-manual state because the required DLS memory primitive is clocked.
+The integrated DLS computer stores its 8-bit PC, eight 16-bit registers, and
+three flags in master/slave NAND latches; DLS CLOCK and KEY chips provide clock,
+step, and reset control. Instruction and external data-memory inputs remain
+manual interfaces. No prebuilt DLS CPU/ALU/mux/register/RAM/ROM component is used;
+custom logic modules are built from primitive NAND gates. The ALU's ADD/SUB paths
+use a four-stage NAND Kogge-Stone adder.
 """
 from __future__ import annotations
 
@@ -12,6 +14,7 @@ import json
 import math
 import random
 import shutil
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -66,6 +69,9 @@ BUILTINS: dict[str, Spec] = {
     "IN-1": Spec("IN-1", [], [("OUT", 1, 0)]),
     "IN-4": Spec("IN-4", [], [("OUT", 4, 0)]),
     "IN-8": Spec("IN-8", [], [("OUT", 8, 0)]),
+    "CLOCK": Spec("CLOCK", [], [("CLK", 1, 0)]),
+    "KEY": Spec("KEY", [], [("OUT", 1, 0)]),
+    "7-SEGMENT": Spec("7-SEGMENT", [(name, 1, i) for i, name in enumerate(("A", "B", "C", "D", "E", "F", "G", "COL"))], []),
     "OUT-1": Spec("OUT-1", [("IN", 1, 0)], []),
     "OUT-4": Spec("OUT-4", [("IN", 4, 0)], []),
     "OUT-8": Spec("OUT-8", [("IN", 8, 0)], []),
@@ -94,6 +100,7 @@ class ChipBuilder:
         self.output_bits: dict[str, int] = {}
         self.subchips: list[dict] = []
         self.wires: list[dict] = []
+        self.displays: list[dict] = []
         self.sub_spec: dict[int, Spec] = {}
         self._output_connection_count: dict[tuple[int, int], int] = {}
         self._target_connection_count: set[tuple[int, int]] = set()
@@ -211,7 +218,7 @@ class ChipBuilder:
             "OutputPins": self.output_pins,
             "SubChips": self.subchips,
             "Wires": self.wires,
-            "Displays": [],
+            "Displays": self.displays,
         }
         _descriptions[self.name] = description
         custom_spec = Spec(
@@ -322,6 +329,56 @@ def make_nor() -> None:
     b.sub_to_sub(o, "Y", inv, "A")
     b.sub_to_port(inv, "Y", "Y")
     b.save()
+
+
+def make_word_logic_chips() -> None:
+    """Make reusable 16-bit word-wide logic blocks from one-bit gates."""
+    operations = (
+        ("AND16", "AND", False),
+        ("OR16", "OR", False),
+        ("XOR16", "XOR", False),
+        ("XNOR16", "XNOR", False),
+        ("NAND16", "NAND", False),
+        ("NOR16", "NOR", False),
+        ("NOT16", "INV", True),
+    )
+    for chip_name, gate_name, unary in operations:
+        inputs = [("A_LO", 8), ("A_HI", 8)]
+        if not unary:
+            inputs += [("B_LO", 8), ("B_HI", 8)]
+        b = define(chip_name, inputs, [("Y_LO", 8), ("Y_HI", 8)], width=22, height=18, colour=(0.31, 0.48, 0.58))
+        splits: dict[str, int] = {}
+        for index, port in enumerate(("A_LO", "A_HI", "B_LO", "B_HI") if not unary else ("A_LO", "A_HI")):
+            split = b.add_sub("8-1BIT", -7, 5 - index * 3, port)
+            b.port_to_sub(port, split, "IN")
+            splits[port] = split
+
+        result_bits: dict[int, tuple[int, int]] = {}
+        for bit in range(16):
+            half = "LO" if bit < 8 else "HI"
+            local = bit % 8
+            a_source = (splits[f"A_{half}"], spec("8-1BIT").outputs[7 - local][2])
+            gate = b.add_sub(gate_name, 0, 8 - bit, f"BIT {bit}")
+            if unary:
+                b.connect(*a_source, gate, spec(gate_name).in_port("A")[0])
+            else:
+                b_source = (splits[f"B_{half}"], spec("8-1BIT").outputs[7 - local][2])
+                if gate_name == "NAND":
+                    b.connect(*a_source, gate, spec(gate_name).in_port("IN B")[0])
+                    b.connect(*b_source, gate, spec(gate_name).in_port("IN A")[0])
+                else:
+                    b.connect(*a_source, gate, spec(gate_name).in_port("A")[0])
+                    b.connect(*b_source, gate, spec(gate_name).in_port("B")[0])
+            gate_output = "OUT" if gate_name == "NAND" else "Y"
+            result_bits[bit] = (gate, spec(gate_name).out_port(gate_output)[0])
+
+        for half, low in (("LO", 0), ("HI", 8)):
+            merge = b.add_sub("1-8BIT", 7, 2 if half == "LO" else -2, f"Y {half}")
+            for local in range(8):
+                pin_name = f"IN {'HGFEDCBA'[7 - local]}"
+                b.connect(*result_bits[low + local], merge, spec("1-8BIT").in_port(pin_name)[0])
+            b.sub_to_port(merge, "OUT", f"Y_{half}")
+        b.save()
 
 
 def make_and3_and4() -> None:
@@ -478,6 +535,37 @@ def make_hex7seg() -> None:
     b.save()
 
 
+def make_hex_display16() -> None:
+    """Split a 16-bit word into four hex digits and expose each 7-segment line."""
+    outputs = [(f"DIGIT_{digit}", 4) for digit in range(4)]
+    outputs += [(f"SEG_D{digit}_{segment.upper()}", 1) for digit in range(4) for segment in "abcdefg"]
+    b = define("HEX_DISPLAY16", [("WORD_LO", 8), ("WORD_HI", 8)], outputs, width=26, height=24, colour=(0.52, 0.28, 0.22))
+    split_lo = b.add_sub("8-1BIT", -8, 2, "WORD LO")
+    split_hi = b.add_sub("8-1BIT", -8, -2, "WORD HI")
+    b.port_to_sub("WORD_LO", split_lo, "IN")
+    b.port_to_sub("WORD_HI", split_hi, "IN")
+    split_spec = spec("8-1BIT")
+
+    # Digit 0 is the least significant nibble; digit 3 is the most significant.
+    digit_sources = (
+        (split_lo, (4, 5, 6, 7)),
+        (split_lo, (0, 1, 2, 3)),
+        (split_hi, (4, 5, 6, 7)),
+        (split_hi, (0, 1, 2, 3)),
+    )
+    for digit, (split, output_indices) in enumerate(digit_sources):
+        merge = b.add_sub("1-4BIT", -3, 6 - digit * 4, f"DIGIT {digit} NIBBLE")
+        merge_spec = spec("1-4BIT")
+        for nibble_bit, output_index in zip(("D", "C", "B", "A"), output_indices):
+            b.connect(split, split_spec.outputs[output_index][2], merge, merge_spec.in_port(f"IN {nibble_bit}")[0])
+        b.sub_to_port(merge, "OUT", f"DIGIT_{digit}")
+        decoder = b.add_sub("HEX7SEG", 4, 6 - digit * 4, f"DIGIT {digit}")
+        b.sub_to_sub(merge, "OUT", decoder, "NIBBLE")
+        for segment in "abcdefg":
+            b.sub_to_port(decoder, segment, f"SEG_D{digit}_{segment.upper()}")
+    b.save()
+
+
 def make_full_adder() -> None:
     b = define("FULL_ADDER_1", [("A", 1), ("B", 1), ("CIN", 1)], [("SUM", 1), ("COUT", 1)], colour=(0.68, 0.39, 0.18))
     p = b.add_sub("XOR", -2.5, 0.8, "P=A XOR B")
@@ -497,6 +585,19 @@ def make_full_adder() -> None:
     b.sub_to_sub(ab, "Y", carry, "A")
     b.sub_to_sub(pc, "Y", carry, "B")
     b.sub_to_port(carry, "Y", "COUT")
+    b.save()
+
+
+def make_half_adder() -> None:
+    b = define("HALF_ADDER_1", [("A", 1), ("B", 1)], [("SUM", 1), ("COUT", 1)], colour=(0.68, 0.39, 0.18))
+    xor = b.add_sub("XOR", -1.5, 0.8, "SUM")
+    and_gate = b.add_sub("AND", -1.5, -0.8, "CARRY")
+    b.port_to_sub("A", xor, "A")
+    b.port_to_sub("B", xor, "B")
+    b.port_to_sub("A", and_gate, "A")
+    b.port_to_sub("B", and_gate, "B")
+    b.sub_to_port(xor, "Y", "SUM")
+    b.sub_to_port(and_gate, "Y", "COUT")
     b.save()
 
 
@@ -546,6 +647,60 @@ def make_adder(width: int) -> None:
     b.save()
 
 
+def make_add16() -> None:
+    """Byte-oriented 16-bit adder wrapper around the explicit 1-bit hierarchy."""
+    inputs = [(name, 8) for name in ("A_LO", "A_HI", "B_LO", "B_HI")] + [("CIN", 1)]
+    b = define("ADD16", inputs, [("SUM_LO", 8), ("SUM_HI", 8), ("COUT", 1)], width=24, height=18, colour=(0.68, 0.39, 0.18))
+    splitters = {}
+    for index, port in enumerate(("A_LO", "A_HI", "B_LO", "B_HI")):
+        split = b.add_sub("8-1BIT", -8, 5 - index * 2.6, port)
+        b.port_to_sub(port, split, "IN")
+        splitters[port] = split
+    adder = b.add_sub("ADDER_16", 0, 0, "RIPPLE ADDER")
+    for bit in range(16):
+        half = "LO" if bit < 8 else "HI"
+        local = bit % 8
+        split_pin = spec("8-1BIT").outputs[7 - local][2]
+        b.connect(splitters[f"A_{half}"], split_pin, adder, spec("ADDER_16").in_port(f"A{bit}")[0])
+        b.connect(splitters[f"B_{half}"], split_pin, adder, spec("ADDER_16").in_port(f"B{bit}")[0])
+    b.port_to_sub("CIN", adder, "CIN")
+    for half, start in (("LO", 0), ("HI", 8)):
+        merge = b.add_sub("1-8BIT", 7, 2 if half == "LO" else -2, f"SUM {half}")
+        for local in range(8):
+            target = f"IN {'HGFEDCBA'[7 - local]}"
+            b.sub_to_sub(adder, f"S{start + local}", merge, target)
+        b.sub_to_port(merge, "OUT", f"SUM_{half}")
+    b.sub_to_port(adder, "COUT", "COUT")
+    b.save()
+
+
+def make_sub16() -> None:
+    inputs = [(name, 8) for name in ("A_LO", "A_HI", "B_LO", "B_HI")]
+    b = define("SUB16", inputs, [("DIFF_LO", 8), ("DIFF_HI", 8), ("NO_BORROW", 1)], width=24, height=18, colour=(0.68, 0.39, 0.18))
+    invert_b = b.add_sub("NOT16", -5, 2, "ONES-COMPLEMENT B")
+    b.port_to_sub("B_LO", invert_b, "A_LO")
+    b.port_to_sub("B_HI", invert_b, "A_HI")
+    adder = b.add_sub("ADD16", 3, 0, "A + NOT(B) + 1")
+    for half in ("LO", "HI"):
+        b.port_to_sub(f"A_{half}", adder, f"A_{half}")
+        b.sub_to_sub(invert_b, f"Y_{half}", adder, f"B_{half}")
+
+    # Build a constant one from A0 and its complement; no constant chip or state is needed.
+    split_a = b.add_sub("8-1BIT", -8, -5, "A LO BITS")
+    b.port_to_sub("A_LO", split_a, "IN")
+    inv_a0 = b.add_sub("INV", -5, -6, "NOT A0")
+    b.connect(split_a, spec("8-1BIT").out_port("OUT A")[0], inv_a0, spec("INV").in_port("A")[0])
+    one = b.add_sub("NAND", -2, -7, "LOGIC ONE")
+    b.connect(split_a, spec("8-1BIT").out_port("OUT A")[0], one, spec("NAND").in_port("IN B")[0])
+    b.sub_to_sub(inv_a0, "Y", one, "IN A")
+    b.sub_to_sub(one, "OUT", adder, "CIN")
+
+    b.sub_to_port(adder, "SUM_LO", "DIFF_LO")
+    b.sub_to_port(adder, "SUM_HI", "DIFF_HI")
+    b.sub_to_port(adder, "COUT", "NO_BORROW")
+    b.save()
+
+
 def make_mux2_1() -> None:
     b = define("MUX2_1", [("A", 1), ("B", 1), ("SEL", 1)], [("Y", 1)])
     inv = b.add_sub("INV", -2.5, 1.1)
@@ -579,6 +734,18 @@ def make_mux2_8() -> None:
         b.port_to_sub("SEL", mux, "SEL")
         b.sub_to_sub(mux, "Y", merge, f"IN {'HGFEDCBA'[bit]}")
     b.sub_to_port(merge, "OUT", "Y")
+    b.save()
+
+
+def make_mux2_16() -> None:
+    inputs = [(name, 8) for name in ("A_LO", "A_HI", "B_LO", "B_HI")] + [("SEL", 1)]
+    b = define("MUX2_16", inputs, [("Y_LO", 8), ("Y_HI", 8)], width=20, height=14, colour=(0.54, 0.4, 0.2))
+    for half, y in (("LO", 2), ("HI", -2)):
+        mux = b.add_sub("MUX2_8", 0, y, f"MUX {half}")
+        b.port_to_sub(f"A_{half}", mux, "A")
+        b.port_to_sub(f"B_{half}", mux, "B")
+        b.port_to_sub("SEL", mux, "SEL")
+        b.sub_to_port(mux, "Y", f"Y_{half}")
     b.save()
 
 
@@ -627,6 +794,18 @@ def make_mux8_8() -> None:
     b.save()
 
 
+def make_mux8_16() -> None:
+    inputs = [(f"D{i}_{half}", 8) for i in range(8) for half in ("LO", "HI")] + [("SEL", 4)]
+    b = define("MUX8_16", inputs, [("Y_LO", 8), ("Y_HI", 8)], width=26, height=20, colour=(0.54, 0.4, 0.2))
+    for half, y in (("LO", 2), ("HI", -2)):
+        mux = b.add_sub("MUX8_8", 0, y, f"MUX {half}")
+        for index in range(8):
+            b.port_to_sub(f"D{index}_{half}", mux, f"D{index}")
+        b.port_to_sub("SEL", mux, "SEL")
+        b.sub_to_port(mux, "Y", f"Y_{half}")
+    b.save()
+
+
 def make_zero16() -> None:
     b = define("ZERO16", [("LO", 8), ("HI", 8)], [("ZERO", 1)], width=18.0, height=10.0)
     sl = b.add_sub("8-1BIT", -5, -1, "LO")
@@ -652,6 +831,129 @@ def make_zero16() -> None:
     inv = b.add_sub("INV", 3, 0)
     b.connect(layer[0][0], layer[0][1], inv, spec("INV").in_port("A")[0])
     b.sub_to_port(inv, "Y", "ZERO")
+    b.save()
+
+
+def make_compare16() -> None:
+    """Unsigned and two's-complement signed comparisons from A - B."""
+    inputs = [(name, 8) for name in ("A_LO", "A_HI", "B_LO", "B_HI")]
+    outputs = [(name, 1) for name in ("EQ", "NE", "LT_U", "LE_U", "GT_U", "GE_U", "LT_S", "LE_S", "GT_S", "GE_S")]
+    b = define("COMPARE16", inputs, outputs, width=26, height=22, colour=(0.43, 0.31, 0.58))
+    sub = b.add_sub("SUB16", -2, 0, "A - B")
+    for name in ("A_LO", "A_HI", "B_LO", "B_HI"):
+        b.port_to_sub(name, sub, name)
+    zero = b.add_sub("ZERO16", 2, 4, "EQUAL")
+    b.sub_to_sub(sub, "DIFF_LO", zero, "LO")
+    b.sub_to_sub(sub, "DIFF_HI", zero, "HI")
+    b.sub_to_port(zero, "ZERO", "EQ")
+
+    not_equal = b.add_sub("INV", 4, 4, "NOT EQUAL")
+    b.sub_to_sub(zero, "ZERO", not_equal, "A")
+    b.sub_to_port(not_equal, "Y", "NE")
+    less_u = b.add_sub("INV", 2, 0, "UNSIGNED BORROW")
+    b.sub_to_sub(sub, "NO_BORROW", less_u, "A")
+    b.sub_to_port(less_u, "Y", "LT_U")
+    b.sub_to_port(sub, "NO_BORROW", "GE_U")
+
+    greater_u = b.add_sub("AND", 6, 1, "A > B unsigned")
+    b.sub_to_sub(sub, "NO_BORROW", greater_u, "A")
+    b.sub_to_sub(not_equal, "Y", greater_u, "B")
+    b.sub_to_port(greater_u, "Y", "GT_U")
+    less_equal_u = b.add_sub("OR", 6, 4, "A <= B unsigned")
+    b.sub_to_sub(less_u, "Y", less_equal_u, "A")
+    b.sub_to_sub(zero, "ZERO", less_equal_u, "B")
+    b.sub_to_port(less_equal_u, "Y", "LE_U")
+
+    sign_a = b.add_sub("8-1BIT", -6, -4, "A SIGN")
+    sign_b = b.add_sub("8-1BIT", -6, -6, "B SIGN")
+    sign_diff = b.add_sub("8-1BIT", 0, -6, "DIFFERENCE SIGN")
+    b.port_to_sub("A_HI", sign_a, "IN")
+    b.port_to_sub("B_HI", sign_b, "IN")
+    b.sub_to_sub(sub, "DIFF_HI", sign_diff, "IN")
+    signs_differ = b.add_sub("XOR", -2, -6, "SIGN A XOR SIGN B")
+    b.connect(sign_a, spec("8-1BIT").out_port("OUT H")[0], signs_differ, spec("XOR").in_port("A")[0])
+    b.connect(sign_b, spec("8-1BIT").out_port("OUT H")[0], signs_differ, spec("XOR").in_port("B")[0])
+    less_s = b.add_sub("MUX2_1", 3, -5, "SIGNED LESS")
+    b.connect(sign_diff, spec("8-1BIT").out_port("OUT H")[0], less_s, spec("MUX2_1").in_port("A")[0])
+    b.connect(sign_a, spec("8-1BIT").out_port("OUT H")[0], less_s, spec("MUX2_1").in_port("B")[0])
+    b.sub_to_sub(signs_differ, "Y", less_s, "SEL")
+    b.sub_to_port(less_s, "Y", "LT_S")
+
+    not_less_s = b.add_sub("INV", 6, -5, "SIGNED GE")
+    b.sub_to_sub(less_s, "Y", not_less_s, "A")
+    b.sub_to_port(not_less_s, "Y", "GE_S")
+    greater_s = b.add_sub("AND", 8, -3, "A > B signed")
+    b.sub_to_sub(not_less_s, "Y", greater_s, "A")
+    b.sub_to_sub(not_equal, "Y", greater_s, "B")
+    b.sub_to_port(greater_s, "Y", "GT_S")
+    less_equal_s = b.add_sub("OR", 8, -6, "A <= B signed")
+    b.sub_to_sub(less_s, "Y", less_equal_s, "A")
+    b.sub_to_sub(zero, "ZERO", less_equal_s, "B")
+    b.sub_to_port(less_equal_s, "Y", "LE_S")
+    b.save()
+
+
+def make_fast_cla16() -> None:
+    """16-bit Kogge-Stone carry-lookahead adder, composed only of primitive NANDs."""
+    inputs = [(f"A{i}", 1) for i in range(16)] + [(f"B{i}", 1) for i in range(16)] + [("CIN", 1)]
+    outputs = [(f"S{i}", 1) for i in range(16)] + [("COUT", 1)]
+    b = define("MISK16_CLA16", inputs, outputs, width=48, height=62, colour=(0.68, 0.39, 0.18))
+    gate_index = 0
+
+    def gate(label: str) -> int:
+        nonlocal gate_index
+        col = gate_index % 28
+        row = gate_index // 28
+        gate_index += 1
+        return b.add_sub("NAND", -19 + col * 1.35, 27 - row * 1.15, label)
+
+    def nand(a: tuple[int, int], rhs: tuple[int, int], label: str) -> tuple[int, int]:
+        owner = gate(label)
+        b.connect(a[0], a[1], owner, spec("NAND").in_port("IN A")[0])
+        b.connect(rhs[0], rhs[1], owner, spec("NAND").in_port("IN B")[0])
+        return owner, spec("NAND").out_port("OUT")[0]
+
+    def inv(a: tuple[int, int], label: str) -> tuple[int, int]:
+        return nand(a, a, label)
+
+    def and2(a: tuple[int, int], rhs: tuple[int, int], label: str) -> tuple[int, int]:
+        return inv(nand(a, rhs, f"{label} NAND"), f"{label} INV")
+
+    def or2(a: tuple[int, int], rhs: tuple[int, int], label: str) -> tuple[int, int]:
+        return nand(inv(a, f"{label} A BAR"), inv(rhs, f"{label} B BAR"), label)
+
+    def xor2(a: tuple[int, int], rhs: tuple[int, int], label: str) -> tuple[int, int]:
+        ab_n = nand(a, rhs, f"{label} P")
+        a_term = nand(a, ab_n, f"{label} A")
+        b_term = nand(rhs, ab_n, f"{label} B")
+        return nand(a_term, b_term, f"{label} SUM")
+
+    a = [(b.input_id[f"A{i}"], 0) for i in range(16)]
+    bb = [(b.input_id[f"B{i}"], 0) for i in range(16)]
+    cin = (b.input_id["CIN"], 0)
+    propagate = [xor2(a[i], bb[i], f"BIT {i} PROPAGATE") for i in range(16)]
+    generate = [and2(a[i], bb[i], f"BIT {i} GENERATE") for i in range(16)]
+
+    # Four parallel-prefix stages compute group propagate/generate in logarithmic depth.
+    prefix_p = propagate[:]
+    prefix_g = generate[:]
+    for stage, distance in enumerate((1, 2, 4, 8), start=1):
+        prev_p, prev_g = prefix_p, prefix_g
+        prefix_p, prefix_g = prev_p[:], prev_g[:]
+        for bit in range(distance, 16):
+            carried = and2(prev_p[bit], prev_g[bit - distance], f"S{stage} G{bit} TERM")
+            prefix_g[bit] = or2(prev_g[bit], carried, f"S{stage} G{bit}")
+            prefix_p[bit] = and2(prev_p[bit], prev_p[bit - distance], f"S{stage} P{bit}")
+
+    carries = [cin]
+    for bit in range(1, 16):
+        prefix = bit - 1
+        carry_in = or2(prefix_g[prefix], and2(prefix_p[prefix], cin, f"C{bit} CIN TERM"), f"CARRY {bit}")
+        carries.append(carry_in)
+    for bit in range(16):
+        b.connect(*xor2(propagate[bit], carries[bit], f"BIT {bit} RESULT"), b.output_id[f"S{bit}"], 0)
+    cout = or2(prefix_g[15], and2(prefix_p[15], cin, "COUT CIN TERM"), "CARRY OUT")
+    b.connect(cout[0], cout[1], b.output_id["COUT"], 0)
     b.save()
 
 
@@ -685,7 +987,7 @@ def make_alu16() -> None:
         not_a_bits[bit] = (ia, spec("INV").out_port("Y")[0])
         not_b_bits[bit] = (ib, spec("INV").out_port("Y")[0])
 
-    # Derive constant 0 and 1 from A0 and NOT(A0), without a clock or feedback.
+    # Derive constant 0 and 1 from A0 and NOT(A0), without extra input pins or feedback.
     const_inv = b.add_sub("INV", -2, 0, "A0 complement")
     b.connect(*source("A", 0), const_inv, spec("INV").in_port("A")[0])
     const0 = b.add_sub("AND", 0, 1, "constant 0")
@@ -695,13 +997,13 @@ def make_alu16() -> None:
     b.connect(*source("A", 0), const1, spec("NAND").in_port("IN B")[0])
     b.sub_to_sub(const_inv, "Y", const1, "IN A")
 
-    add = b.add_sub("ADDER_16", 2, 5, "A + B")
-    sub = b.add_sub("ADDER_16", 2, -7, "A + NOT(B) + 1")
+    add = b.add_sub("MISK16_CLA16", 2, 5, "A + B · 4-STAGE CLA")
+    sub = b.add_sub("MISK16_CLA16", 2, -7, "A + NOT(B) + 1 · 4-STAGE CLA")
     for bit in range(16):
-        b.connect(*source("A", bit), add, spec("ADDER_16").in_port(f"A{bit}")[0])
-        b.connect(*source("B", bit), add, spec("ADDER_16").in_port(f"B{bit}")[0])
-        b.connect(*source("A", bit), sub, spec("ADDER_16").in_port(f"A{bit}")[0])
-        b.connect(*not_b_bits[bit], sub, spec("ADDER_16").in_port(f"B{bit}")[0])
+        b.connect(*source("A", bit), add, spec("MISK16_CLA16").in_port(f"A{bit}")[0])
+        b.connect(*source("B", bit), add, spec("MISK16_CLA16").in_port(f"B{bit}")[0])
+        b.connect(*source("A", bit), sub, spec("MISK16_CLA16").in_port(f"A{bit}")[0])
+        b.connect(*not_b_bits[bit], sub, spec("MISK16_CLA16").in_port(f"B{bit}")[0])
     b.sub_to_sub(const0, "Y", add, "CIN")
     b.sub_to_sub(const1, "OUT", sub, "CIN")
 
@@ -721,8 +1023,8 @@ def make_alu16() -> None:
     select_ops = ("ADD", "SUB", "AND", "OR", "XOR", "XNOR", "NAND", "NOR", "NOT")
     result_sources: dict[str, dict[int, tuple[int, int]]] = {op: {} for op in select_ops}
     for bit in range(16):
-        result_sources["ADD"][bit] = (add, spec("ADDER_16").out_port(f"S{bit}")[0])
-        result_sources["SUB"][bit] = (sub, spec("ADDER_16").out_port(f"S{bit}")[0])
+        result_sources["ADD"][bit] = (add, spec("MISK16_CLA16").out_port(f"S{bit}")[0])
+        result_sources["SUB"][bit] = (sub, spec("MISK16_CLA16").out_port(f"S{bit}")[0])
         for op in ("AND", "OR", "XOR", "XNOR", "NAND", "NOR", "NOT"):
             result_sources[op][bit] = logic_bits[op][bit]
 
@@ -912,6 +1214,41 @@ def make_inc8() -> None:
     for bit in range(8):
         b.connect(*outputs[bit], merge, spec("1-8BIT").in_port(f"IN {'HGFEDCBA'[7 - bit]}")[0])
     b.sub_to_port(merge, "OUT", "OUT")
+    b.save()
+
+
+def make_inc16() -> None:
+    b = define("INC16", [("IN_LO", 8), ("IN_HI", 8)], [("OUT_LO", 8), ("OUT_HI", 8)], width=22, height=18, colour=(0.68, 0.39, 0.18))
+    splits = {}
+    for half, y in (("LO", 2), ("HI", -2)):
+        split = b.add_sub("8-1BIT", -7, y, f"IN {half}")
+        b.port_to_sub(f"IN_{half}", split, "IN")
+        splits[half] = split
+    bit_signals = {}
+    for bit in range(16):
+        half = "LO" if bit < 8 else "HI"
+        local = bit % 8
+        bit_signals[bit] = (splits[half], spec("8-1BIT").outputs[7 - local][2])
+    result = {}
+    inv = b.add_sub("INV", -4, 6, "NOT BIT 0")
+    b.connect(*bit_signals[0], inv, spec("INV").in_port("A")[0])
+    result[0] = (inv, spec("INV").out_port("Y")[0])
+    carry = bit_signals[0]
+    for bit in range(1, 16):
+        xor = b.add_sub("XOR", -1, 7 - bit * 0.75, f"BIT {bit} SUM")
+        b.connect(*bit_signals[bit], xor, spec("XOR").in_port("A")[0])
+        b.connect(*carry, xor, spec("XOR").in_port("B")[0])
+        result[bit] = (xor, spec("XOR").out_port("Y")[0])
+        if bit < 15:
+            and_gate = b.add_sub("AND", 1, -3 - bit * 0.65, f"CARRY {bit+1}")
+            b.connect(*bit_signals[bit], and_gate, spec("AND").in_port("A")[0])
+            b.connect(*carry, and_gate, spec("AND").in_port("B")[0])
+            carry = (and_gate, spec("AND").out_port("Y")[0])
+    for half, start in (("LO", 0), ("HI", 8)):
+        merge = b.add_sub("1-8BIT", 6, 2 if half == "LO" else -2, f"OUT {half}")
+        for local in range(8):
+            b.connect(*result[start + local], merge, spec("1-8BIT").in_port(f"IN {'HGFEDCBA'[7 - local]}")[0])
+        b.sub_to_port(merge, "OUT", f"OUT_{half}")
     b.save()
 
 
@@ -1126,43 +1463,244 @@ def make_cpu_step() -> None:
     b.save()
 
 
-def make_testbench() -> None:
+def make_computer() -> None:
+    """Assemble a clocked CPU panel with raw-NAND state, reset/step keys, and displays."""
     cpu = spec("MISK16_CPU_STEP")
-    inputs = [(p[0], p[1]) for p in cpu.inputs]
-    outputs = [(p[0], p[1]) for p in cpu.outputs]
-    b = define("MISK16_TESTBENCH", [], [], width=90, height=70, colour=(0.17, 0.29, 0.43))
-    cpu_id = b.add_sub("MISK16_CPU_STEP", 0, 0, "CLOCK-FREE MANUAL STEP CORE")
-    input_chips: dict[str, int] = {}
+    inputs = [(name, bits) for name, bits, _pin in cpu.inputs]
+    state_bytes = [f"R{i}_{half}" for i in range(8) for half in ("LO", "HI")] + ["PC"]
+    state_flags = ["FLAG_Z", "FLAG_N", "FLAG_C"]
+    state_input_names = set(state_bytes + state_flags)
+    outputs = [(name, bits) for name, bits, _pin in cpu.outputs]
+    outputs += [(f"{name}_CURRENT", 8) for name in state_bytes]
+    outputs += [(f"{name}_CURRENT", 1) for name in state_flags]
+    outputs += [(f"HEX_DIGIT_{digit}", 4) for digit in range(4)]
+    outputs += [(f"HEX_SEG_D{digit}_{segment.upper()}", 1) for digit in range(4) for segment in "abcdefg"]
+    outputs += [(f"PC_HEX_DIGIT_{digit}", 4) for digit in range(2)]
+    outputs += [(f"PC_HEX_SEG_D{digit}_{segment.upper()}", 1) for digit in range(2) for segment in "abcdefg"]
+    b = define("MISK16_COMPUTER", [], outputs, width=230, height=125, colour=(0.17, 0.29, 0.43))
+    cpu_id = b.add_sub("MISK16_CPU_STEP", -2, 2, "MISK-16 COMBINATIONAL EXECUTE DATAPATH")
+
+    # Instruction and external-memory/I/O data remain editable input interfaces.
+    # Registers, flags, and PC are held in clocked NAND-gate state below.
     for index, (name, bits) in enumerate(inputs):
+        if name in state_input_names:
+            continue
         input_chip = {1: "IN-1", 4: "IN-4", 8: "IN-8"}[bits]
-        x = -28 + (index // 22) * 4
-        y = 28 - (index % 22) * 2.5
-        port = b.add_sub(input_chip, x, y, name)
-        input_chips[name] = port
-        out_id = spec(input_chip).out_port("OUT")[0]
-        target_id = cpu.input_ids[name]
-        b.connect(port, out_id, cpu_id, target_id)
-    for index, (name, bits) in enumerate(outputs):
-        output_chip = {1: "OUT-1", 4: "OUT-4", 8: "OUT-8"}[bits]
-        x = 28 + (index // 22) * 4
-        y = 28 - (index % 22) * 2.5
-        port = b.add_sub(output_chip, x, y, name)
-        source_id = cpu.output_ids[name]
-        target_pin = spec(output_chip).in_port("IN")[0]
-        b.connect(cpu_id, source_id, port, target_pin)
-    # The physical view is a manually-entered single-instruction transition panel.
-    b.height = 76
+        x = -47 + (index // 18) * 4
+        y = 34 - (index % 18) * 3.5
+        input_port = b.add_sub(input_chip, x, y, name)
+        b.connect(input_port, spec(input_chip).out_port("OUT")[0], cpu_id, cpu.input_ids[name])
+
+    # DLS clock and keyboard controls. Key 0 synchronously resets state; key 2 steps once.
+    clock = b.add_sub("CLOCK", -47, -38, "CPU CLOCK · RESUME SIMULATION")
+    clock_out = (clock, spec("CLOCK").out_port("CLK")[0])
+    reset_key = b.add_sub("KEY", -43, -38, "RESET PC / REGISTERS · 0", [ord("0")])
+    reset = (reset_key, spec("KEY").out_port("OUT")[0])
+    step_key = b.add_sub("KEY", -39, -38, "STEP ONE INSTRUCTION · 2", [ord("2")])
+    step_level = (step_key, spec("KEY").out_port("OUT")[0])
+
+    raw_gate_index = 0
+    inv_cache: dict[tuple[int, int], tuple[int, int]] = {}
+
+    def raw_gate(label: str) -> int:
+        nonlocal raw_gate_index
+        column = raw_gate_index % 24
+        row = raw_gate_index // 24
+        raw_gate_index += 1
+        return b.add_sub("NAND", 60 + column * 1.45, 39 - row * 1.2, label)
+
+    def raw_nand(a: tuple[int, int], other: tuple[int, int], label: str) -> tuple[int, int]:
+        owner = raw_gate(label)
+        b.connect(a[0], a[1], owner, spec("NAND").in_port("IN A")[0])
+        b.connect(other[0], other[1], owner, spec("NAND").in_port("IN B")[0])
+        return owner, spec("NAND").out_port("OUT")[0]
+
+    def inv(signal: tuple[int, int], label: str = "NOT") -> tuple[int, int]:
+        if signal not in inv_cache:
+            inv_cache[signal] = raw_nand(signal, signal, label)
+        return inv_cache[signal]
+
+    def and2(a: tuple[int, int], other: tuple[int, int], label: str = "AND") -> tuple[int, int]:
+        return inv(raw_nand(a, other, f"{label} NAND"), f"{label} INV")
+
+    def or2(a: tuple[int, int], other: tuple[int, int], label: str = "OR") -> tuple[int, int]:
+        return raw_nand(inv(a, f"{label} A BAR"), inv(other, f"{label} B BAR"), label)
+
+    def mux2(select: tuple[int, int], hold: tuple[int, int], new_value: tuple[int, int], label: str) -> tuple[int, int]:
+        held = raw_nand(hold, inv(select, f"{label} STEP BAR"), f"{label} HOLD")
+        loaded = raw_nand(new_value, select, f"{label} LOAD")
+        return raw_nand(held, loaded, f"{label} MUX")
+
+    clock_bar = inv(clock_out, "CLOCK BAR")
+
+    def latch(data: tuple[int, int], enable: tuple[int, int], label: str) -> tuple[int, int]:
+        data_bar = inv(data, f"{label} DATA BAR")
+        set_bar = raw_nand(data, enable, f"{label} SET BAR")
+        reset_bar = raw_nand(data_bar, enable, f"{label} RESET BAR")
+        q_gate = raw_gate(f"{label} Q")
+        qb_gate = raw_gate(f"{label} Q BAR")
+        q = (q_gate, spec("NAND").out_port("OUT")[0])
+        qb = (qb_gate, spec("NAND").out_port("OUT")[0])
+        b.connect(set_bar[0], set_bar[1], q_gate, spec("NAND").in_port("IN A")[0])
+        b.connect(qb[0], qb[1], q_gate, spec("NAND").in_port("IN B")[0])
+        b.connect(reset_bar[0], reset_bar[1], qb_gate, spec("NAND").in_port("IN A")[0])
+        b.connect(q[0], q[1], qb_gate, spec("NAND").in_port("IN B")[0])
+        return q, qb
+
+    def dff_placeholder(label: str) -> dict:
+        """Master/slave DFF from NAND latches; connect D after Q is available."""
+        dbar_gate = raw_gate(f"{label} D BAR")
+        dbar = (dbar_gate, spec("NAND").out_port("OUT")[0])
+        setbar_gate = raw_gate(f"{label} MASTER SET BAR")
+        b.connect(clock_bar[0], clock_bar[1], setbar_gate, spec("NAND").in_port("IN B")[0])
+        reset_bar = raw_nand(dbar, clock_bar, f"{label} MASTER RESET BAR")
+        master_q_gate = raw_gate(f"{label} MASTER Q")
+        master_qbar_gate = raw_gate(f"{label} MASTER Q BAR")
+        master_q = (master_q_gate, spec("NAND").out_port("OUT")[0])
+        master_qbar = (master_qbar_gate, spec("NAND").out_port("OUT")[0])
+        b.connect(setbar_gate, spec("NAND").out_port("OUT")[0], master_q_gate, spec("NAND").in_port("IN A")[0])
+        b.connect(master_qbar[0], master_qbar[1], master_q_gate, spec("NAND").in_port("IN B")[0])
+        b.connect(reset_bar[0], reset_bar[1], master_qbar_gate, spec("NAND").in_port("IN A")[0])
+        b.connect(master_q[0], master_q[1], master_qbar_gate, spec("NAND").in_port("IN B")[0])
+        slave_q, _slave_qbar = latch(master_q, clock_out, f"{label} SLAVE")
+        return {"q": slave_q, "dbar_gate": dbar_gate, "setbar_gate": setbar_gate, "label": label}
+
+    def set_dff_data(dff: dict, data: tuple[int, int]) -> None:
+        b.connect(data[0], data[1], dff["dbar_gate"], spec("NAND").in_port("IN B")[0])
+        b.connect(data[0], data[1], dff["dbar_gate"], spec("NAND").in_port("IN A")[0])
+        b.connect(data[0], data[1], dff["setbar_gate"], spec("NAND").in_port("IN A")[0])
+
+    def one_bit_dff(data: tuple[int, int], label: str) -> tuple[int, int]:
+        dff = dff_placeholder(label)
+        set_dff_data(dff, data)
+        return dff["q"]
+
+    # One clock edge per held KEY 2 press (release before the next instruction).
+    step_previous = one_bit_dff(step_level, "STEP KEY HISTORY")
+    step_event = and2(step_level, inv(step_previous, "STEP HISTORY BAR"), "STEP EDGE")
+    reset_bar = inv(reset, "RESET BAR")
+
+    # Allocate every CPU state bit before wiring its next-state logic.
+    state_ffs: dict[str, list[dict]] = {}
+    state_q: dict[str, list[tuple[int, int]]] = {}
+    for name in state_bytes:
+        state_ffs[name] = [dff_placeholder(f"{name} BIT {bit}") for bit in range(8)]
+        state_q[name] = [item["q"] for item in state_ffs[name]]
+    for name in state_flags:
+        state_ffs[name] = [dff_placeholder(f"{name} STATE")]
+        state_q[name] = [state_ffs[name][0]["q"]]
+
+    # Feed current state into the execute core and expose it as named outputs/probes.
+    state_owners: dict[str, tuple[int, int]] = {}
+    for index, name in enumerate(state_bytes):
+        merge = b.add_sub("1-8BIT", 48, 34 - index * 2.2, f"{name} CURRENT")
+        for bit, signal in enumerate(state_q[name]):
+            pin = spec("1-8BIT").in_port(f"IN {'HGFEDCBA'[7 - bit]}")[0]
+            b.connect(signal[0], signal[1], merge, pin)
+        merged = (merge, spec("1-8BIT").out_port("OUT")[0])
+        state_owners[name] = merged
+        b.connect(merged[0], merged[1], cpu_id, cpu.input_ids[name])
+        output_name = f"{name}_CURRENT"
+        b.connect(merged[0], merged[1], b.output_id[output_name], 0)
+        probe = b.add_sub("OUT-8", 45, 0, output_name)
+        b.connect(merged[0], merged[1], probe, spec("OUT-8").in_port("IN")[0])
+
+    for name in state_flags:
+        signal = state_q[name][0]
+        state_owners[name] = signal
+        b.connect(signal[0], signal[1], cpu_id, cpu.input_ids[name])
+        output_name = f"{name}_CURRENT"
+        b.connect(signal[0], signal[1], b.output_id[output_name], 0)
+        probe = b.add_sub("OUT-1", 45, -2 - state_flags.index(name) * 1.2, output_name)
+        b.connect(signal[0], signal[1], probe, spec("OUT-1").in_port("IN")[0])
+
+    # State updates are synchronous and reset-dominant. PC_NEXT already handles branches.
+    for name in state_bytes:
+        next_name = "PC_NEXT" if name == "PC" else f"{name.rsplit('_', 1)[0]}_NEXT_{name.rsplit('_', 1)[1]}"
+        split = b.add_sub("8-1BIT", 48, 34 - state_bytes.index(name) * 2.2 - 1.0, f"{name} NEXT")
+        b.connect(cpu_id, cpu.output_ids[next_name], split, spec("8-1BIT").in_port("IN")[0])
+        for bit, dff in enumerate(state_ffs[name]):
+            next_bit = (split, spec("8-1BIT").outputs[7 - bit][2])
+            selected = mux2(step_event, state_q[name][bit], next_bit, f"{name} BIT {bit}")
+            reset_value = and2(reset_bar, selected, f"{name} RESET {bit}")
+            set_dff_data(dff, reset_value)
+    for name in state_flags:
+        next_name = f"{name}_NEXT"
+        next_value = (cpu_id, cpu.output_ids[next_name])
+        selected = mux2(step_event, state_q[name][0], next_value, f"{name} STEP")
+        reset_value = and2(reset_bar, selected, f"{name} RESET")
+        set_dff_data(state_ffs[name][0], reset_value)
+
+    # Keep readable probes inside the computer and expose all combinational CPU outputs.
+    for name, bits, pin_id in cpu.outputs:
+        probe = b.add_sub({1: "OUT-1", 4: "OUT-4", 8: "OUT-8"}[bits], 45, 0, name)
+        target_pin = spec({1: "OUT-1", 4: "OUT-4", 8: "OUT-8"}[bits]).in_port("IN")[0]
+        b.connect(cpu_id, pin_id, probe, target_pin)
+        b.connect(cpu_id, pin_id, b.output_id[name], 0)
+
+    # A constant-zero 8-bit word is formed from a signal and its complement.
+    reset_not = inv(reset, "SCREEN RESET BAR")
+    logic_zero = and2(reset, reset_not, "SCREEN LOGIC ZERO")
+    zero_bus = b.add_sub("1-8BIT", 48, -11, "PC HEX HIGH BYTE ZERO")
+    for bit in range(8):
+        b.connect(logic_zero[0], logic_zero[1], zero_bus, spec("1-8BIT").in_port(f"IN {'HGFEDCBA'[7 - bit]}")[0])
+
+    hex_display = b.add_sub("HEX_DISPLAY16", 21, -23, "EXEC RESULT · HEX")
+    b.sub_to_sub(cpu_id, "EXEC_LO", hex_display, "WORD_LO")
+    b.sub_to_sub(cpu_id, "EXEC_HI", hex_display, "WORD_HI")
+    pc_display = b.add_sub("HEX_DISPLAY16", 21, -38, "PROGRAM COUNTER · HEX")
+    b.connect(state_owners["PC"][0], state_owners["PC"][1], pc_display, spec("HEX_DISPLAY16").in_port("WORD_LO")[0])
+    b.connect(zero_bus, spec("1-8BIT").out_port("OUT")[0], pc_display, spec("HEX_DISPLAY16").in_port("WORD_HI")[0])
+
+    display_probe_index = 0
+    for display_name, display_owner, digit_indices, y in (
+        ("EXEC", hex_display, range(4), 20),
+        ("PC", pc_display, range(2), 12),
+    ):
+        for digit in digit_indices:
+            digit_name = f"{display_name}_HEX_DIGIT_{digit}"
+            probe = b.add_sub("OUT-4", 45, -18 - display_probe_index * 1.2, digit_name)
+            display_probe_index += 1
+            b.sub_to_sub(display_owner, f"DIGIT_{digit}", probe, "IN")
+            b.sub_to_port(display_owner, f"DIGIT_{digit}", f"HEX_DIGIT_{digit}" if display_name == "EXEC" else digit_name)
+            screen = b.add_sub("7-SEGMENT", 40 + digit * 3.2, y, f"{display_name} DISPLAY DIGIT {digit}")
+            for segment in "abcdefg":
+                segment_name = f"SEG_D{digit}_{segment.upper()}"
+                b.sub_to_sub(display_owner, segment_name, screen, segment.upper())
+                if display_name == "EXEC":
+                    root_name = f"HEX_SEG_D{digit}_{segment.upper()}"
+                    b.sub_to_port(display_owner, segment_name, root_name)
+                else:
+                    root_name = f"PC_HEX_SEG_D{digit}_{segment.upper()}"
+                    b.sub_to_port(display_owner, segment_name, root_name)
+            b.connect(logic_zero[0], logic_zero[1], screen, spec("7-SEGMENT").in_port("COL")[0])
+            b.displays.append({"SubChipID": screen, "Position": pos(40 + digit * 3.2, y), "Scale": 2.0})
+
+    # Keep output probe chips in separated rows; screen and state chips remain readable.
+    probe_children = [child for child in b.subchips if child["Name"].startswith("OUT-")]
+    for index, child in enumerate(probe_children):
+        child["Position"] = pos(98 + (index // 28) * 4, 36 - (index % 28) * 2.7)
+    b.width = 230
+    b.height = max(125, 45 + math.ceil(raw_gate_index / 24) * 1.2)
+    b.save()
+
+
+def make_testbench() -> None:
+    """Legacy collection name kept as a thin alias for older project instructions."""
+    b = define("MISK16_TESTBENCH", [], [], width=36, height=20, colour=(0.17, 0.29, 0.43))
+    b.add_sub("MISK16_COMPUTER", 0, 0, "OPEN THE CENTRAL MISK-16 COMPUTER")
     b.save()
 
 
 def make_project_description() -> None:
     custom_names = list(_descriptions.keys())
     collections = [
-        {"Name": "00 · Open this first", "Chips": ["MISK16_TESTBENCH", "MISK16_CPU_STEP"], "IsToggledOpen": True},
-        {"Name": "01 · Primitive logic", "Chips": ["INV", "AND", "OR", "XOR", "XNOR", "NOR", "AND3", "AND4", "OR_REDUCE8"], "IsToggledOpen": False},
-        {"Name": "02 · Adders", "Chips": ["FULL_ADDER_1", "ADDER_1", "ADDER_2", "ADDER_4", "ADDER_8", "ADDER_16"], "IsToggledOpen": False},
-        {"Name": "03 · Word logic and tools", "Chips": ["MUX2_1", "MUX2_8", "MUX8_1", "MUX8_8", "ZERO16", "ALU16", "DECODER4TO16", "ENCODER16TO4", "HEX7SEG", "RESULT_MUX5_8"], "IsToggledOpen": False},
-        {"Name": "04 · CPU", "Chips": ["OPCODE_DECODER", "REGISTER_FILE_READ", "REGISTER_FILE_NEXT", "REGISTER_FILE_MANUAL", "INC8", "MISK16_CPU_STEP"], "IsToggledOpen": False},
+        {"Name": "00 · Open this first", "Chips": ["MISK16_COMPUTER", "MISK16_CPU_STEP", "MISK16_TESTBENCH"], "IsToggledOpen": True},
+        {"Name": "01 · Logic gates", "Chips": ["INV", "AND", "OR", "XOR", "XNOR", "NOR", "AND3", "AND4", "OR_REDUCE8", "AND16", "OR16", "XOR16", "XNOR16", "NAND16", "NOR16", "NOT16"], "IsToggledOpen": False},
+        {"Name": "02 · Arithmetic and compare", "Chips": ["HALF_ADDER_1", "FULL_ADDER_1", "ADDER_1", "ADDER_2", "ADDER_4", "ADDER_8", "ADDER_16", "MISK16_CLA16", "ADD16", "SUB16", "INC8", "INC16", "COMPARE16", "ZERO16", "ALU16"], "IsToggledOpen": False},
+        {"Name": "03 · Multiplexers and data routing", "Chips": ["MUX2_1", "MUX2_8", "MUX2_16", "MUX8_1", "MUX8_8", "MUX8_16", "RESULT_MUX5_8"], "IsToggledOpen": False},
+        {"Name": "04 · CPU core and interfaces", "Chips": ["OPCODE_DECODER", "REGISTER_FILE_READ", "REGISTER_FILE_NEXT", "REGISTER_FILE_MANUAL", "INC8", "MISK16_CPU_STEP"], "IsToggledOpen": False},
+        {"Name": "05 · Decode and displays", "Chips": ["DECODER4TO16", "ENCODER16TO4", "HEX7SEG", "HEX_DISPLAY16"], "IsToggledOpen": False},
     ]
     now = datetime.now(timezone.utc).astimezone().isoformat(timespec="milliseconds")
     description = {
@@ -1211,6 +1749,7 @@ def build() -> None:
     make_mux8_1()
     make_mux8_8()
     make_zero16()
+    make_fast_cla16()
     make_alu16()
     make_opcode_decoder()
     make_register_file_manual()
@@ -1219,37 +1758,75 @@ def build() -> None:
     make_inc8()
     make_result_mux5_8()
     make_cpu_step()
+
+    # Optional reusable building blocks are generated after the original core so
+    # existing DLS pin/chip IDs remain stable as the library grows.
+    make_word_logic_chips()
+    make_half_adder()
+    make_add16()
+    make_sub16()
+    make_mux2_16()
+    make_mux8_16()
+    make_inc16()
+    make_compare16()
+    make_hex_display16()
+    make_computer()
     make_testbench()
 
     for name, description in _descriptions.items():
         (CHIPS_DIR / f"{name}.json").write_text(json.dumps(description, indent=2) + "\n", encoding="utf-8")
     make_project_description()
 
-    readme = """# MISK-16 DLS project (Digital Logic Sim 2.1.6)
+    readme = """# MISK-16 clocked CPU in Digital Logic Sim 2.1.6
 
-This is a native-format DLS project folder. Copy the whole `MISK16-DLS` folder into the Digital Logic Sim user-data `Projects` directory (the same directory that contains your existing DLS project folders), then restart/open the project named `MISK16-DLS`. Open the **00 · Open this first** collection and choose `MISK16_TESTBENCH`. Use DLS's normal Save command after opening it.
+This is a native-format DLS project directory. Copy the whole `MISK16-DLS` folder into the DLS user-data `Projects` directory, restart/refresh DLS, and open the `MISK16-DLS` project. In **00 · Open this first**, open **MISK16_COMPUTER**. Use DLS's normal Save command after opening it.
 
-## What is implemented
+## Clocked central computer
 
-- A hierarchical 16-bit logic datapath built from DLS's NAND primitive: `FULL_ADDER_1 → ADDER_2 → ADDER_4 → ADDER_8 → ADDER_16`, seven bitwise functions, `ALU16`, nibble decoder/encoder, and HEX seven-segment logic.
-- The `MISK16_CPU_STEP` combinational single-instruction transition core. It decodes the 4-bit prefix + 12-bit opcode ID, reads from eight externally editable 16-bit register values, calculates ALU/flags/branch/memory/I/O controls, and produces each register's `NEXT` value and `PC_NEXT`.
-- `MISK16_TESTBENCH` exposes editable DLS `IN-1/4/8` chips and `OUT-1/4/8` probes. Enter the current state and instruction operands, inspect the outputs, then manually copy NEXT values back to the matching IN chips for the next software-style step. There is no clock, pulse, feedback storage, shared bus, tri-state, ROM, or hidden state.
+`MISK16_COMPUTER` combines the `MISK16_CPU_STEP` datapath/control core, NAND-built state, editable labeled DLS IN chips for the instruction and external memory/I/O interfaces, named output probes, a four-digit execution-result display, and a two-digit PC display. The top panel exposes current state and CPU outputs as custom-chip pins. `MISK16_TESTBENCH` remains as a backwards-compatible alias.
 
-## Quick test: ADD R0, R1, R2
+- **Start/resume DLS simulation** to run the `CLOCK` source.
+- Press **0** for synchronous reset. Hold it until a rising clock edge clears the 8-bit PC, eight 16-bit registers, and Z/N/C flags.
+- Press and release **2** to execute one instruction. The NAND-built edge detector prevents a held key from stepping repeatedly; release is sampled on a clock edge before the next press.
+- Instruction/tag/operand, input data, and external data-memory read-word chips are still manually editable. There is no on-chip program ROM or data RAM; `MEM_READ_EN`, `MEM_WRITE_EN`, `MEM_ADDR_*`, and `MEM_WRITE_*` remain explicit external-memory signals.
 
-On the input chips, enter `TAG_PREFIX=0`, `OP_ID_HI=0`, `OP_ID_MID=0`, `OP_ID_LO=1`; set `RA=1`, `RB=2`, `RD=0`; set `R1_LO=5`, `R1_HI=0`, `R2_LO=7`, `R2_HI=0`. The output probes should show `EXEC_LO=12`, `R0_NEXT_LO=12`, `R0_NEXT_HI=0`, `PC_NEXT=1`, and Z/N/C all zero. The prefix plus opcode nibbles are the binary word `0000 0000 0000 0001` (ADD). Copy NEXT values to the input chips manually before the next instruction.
+The storage cells are 139 master/slave DFFs built from 1,390 individual NAND gates (PC + register file + flags), plus one NAND-built step-key-history DFF. The full top panel contains 2,103 NAND gates. No prebuilt DLS DFF/register/ALU/mux/RAM/ROM component is used; the custom CPU/ALU/mux modules are composed from primitive NAND gates. Built-in split/join components only adapt pin widths; DLS IN/OUT chips are manual interfaces. The only functional clock/control/display components are one `CLOCK`, two `KEY`s, and six `7-SEGMENT` displays.
 
-## Opcode / operand layout
+## Faster ALU adder
 
-The opcode tag is `[ADDRESS/NUMBER:4][OPCODE ID:12]`. For example, ADD has ID 1 and SUB has ID 2. The ALU and CPU use separate operand input fields (`RA`, `RB`, `RD`, immediate, branch target), matching the workbench's structured instruction records; the opcode tag alone is not a complete instruction encoding.
+The `ALU16` ADD and SUB paths use `MISK16_CLA16`, a 16-bit Kogge–Stone carry-lookahead network composed of raw NAND gates. Four parallel-prefix stages compute group propagate/generate signals at distances 1, 2, 4, and 8, reducing carry depth from a serial 16-bit ripple chain to logarithmic prefix depth. The reusable hierarchical ripple adder remains available as `ADDER_1/2/4/8/16` for comparison; the ALU uses the faster prefix block.
 
-## State and memory limitation
+## Try a program
 
-This project deliberately obeys the no-clock/no-pulse rule. Therefore it does not use DLS's clocked `dev.RAM-8` or `ROM 256×16`, and it does not claim that unclocked feedback stores state. The eight registers and PC are manually editable input values; the logic returns next values for a user to re-enter. The program instruction, data-RAM read value, and external INPUT WORD are likewise supplied manually. `MEM_READ_EN`, `MEM_WRITE_EN`, `MEM_ADDR_*`, and `MEM_WRITE_*` are the explicit interface to a separately maintained data store. Consequently this is a DLS-importable combinational computer core/manual-step testbench, not a persistent 256-entry program RAM or 4,096-word on-chip data RAM. The browser workbench remains the persistent software machine.
+First reset with **0**. To load R1=5, set `OP_ID_HI=0`, `OP_ID_MID=0`, `OP_ID_LO=11` (LDI), `RD=1`, `IMM_LO=5`, and `IMM_HI=0`; press/release **2**. Change `RD=2`, `IMM_LO=7`, then press/release **2** again. For `ADD R0, R1, R2`, set `OP_ID_LO=1`, `RA=1`, `RB=2`, `RD=0`, then press/release **2**. The execution display shows `000C`, `R0_LO_CURRENT` is 12, and the PC display/count advances once per instruction. Reset **0** clears registered state without modifying the manual interface values.
 
-All subcircuits use direct pin-to-pin wires. Multi-bit values are split into 1-, 4-, and 8-bit DLS connections; no DLS `BUS` chip is used.
+The instruction tag remains `[ADDRESS/NUMBER:4][OPCODE ID:12]`; operands are separate structured fields, as in the browser workbench. Data RAM is an external 4,096 × 16-bit (8 KiB) interface in the browser CPU model and is not stored in this native DLS panel.
+
+## Reusable library and checks
+
+The 49 custom chips include primitive-NAND logic and word operators; half/full and hierarchical ripple adders; `MISK16_CLA16`; `ADD16`/`SUB16`; `INC8`/`INC16`; `COMPARE16`; `ZERO16`; the `ALU16`; multiplexers; opcode decoder; combinational CPU-step core; and hex decoders/displays. The signed comparator and utility logic are general blocks and do not add opcodes to the MISK-16 ISA.
+
+Build and validate from the repository root:
+
+```sh
+python3 tools/build_dls_project.py
+python3 tools/validate_dls_project.py
+```
+
+The validator checks project/chip references, point-to-point wiring, forbidden built-ins, NAND latch feedback topology, reset/step state behavior, CPU vectors, and the carry-lookahead adder. DLS itself is not installed in the build environment, so import/save in the Unity application should be performed after copying the project to the DLS user-data `Projects` folder.
 """
     (PROJECT / "README.md").write_text(readme, encoding="utf-8")
+
+    # Keep the ready-to-import archive in sync with the generated project folder.
+    archive = ROOT / "MISK16-DLS.zip"
+    temporary_archive = ROOT / "MISK16-DLS.zip.tmp"
+    with zipfile.ZipFile(temporary_archive, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
+        zf.writestr(f"{PROJECT.name}/", "")
+        zf.writestr(f"{PROJECT.name}/Chips/", "")
+        for path in sorted(PROJECT.rglob("*")):
+            if path.is_file():
+                zf.write(path, path.relative_to(ROOT).as_posix())
+    temporary_archive.replace(archive)
 
 
 if __name__ == "__main__":

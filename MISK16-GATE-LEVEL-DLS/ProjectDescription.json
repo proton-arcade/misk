@@ -1,0 +1,33 @@
+{
+  "ProjectName": "MISK16-GATE-LEVEL-DLS",
+  "DLSVersion_LastSaved": "2.1.6",
+  "DLSVersion_EarliestCompatible": "2.0.0",
+  "CreationTime": "2026-10-08T10:23:48.774+00:00",
+  "LastSaveTime": "2026-10-08T10:23:48.774+00:00",
+  "Prefs_MainPinNamesDisplayMode": 1,
+  "Prefs_ChipPinNamesDisplayMode": 1,
+  "Prefs_GridDisplayMode": 1,
+  "Prefs_Snapping": 1,
+  "Prefs_StraightWires": 1,
+  "Prefs_SimPaused": true,
+  "Prefs_SimTargetStepsPerSecond": 10000,
+  "Prefs_SimStepsPerClockTick": 3,
+  "AllCustomChipNames": [
+    "MISK16_GATE_TEXT_PAD"
+  ],
+  "StarredList": [
+    {
+      "Name": "00 \u00b7 Open this first",
+      "IsCollection": true
+    }
+  ],
+  "ChipCollections": [
+    {
+      "Name": "00 \u00b7 Open this first",
+      "Chips": [
+        "MISK16_GATE_TEXT_PAD"
+      ],
+      "IsToggledOpen": true
+    }
+  ]
+}

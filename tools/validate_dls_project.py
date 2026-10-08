@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the generated DLS project structure and simulate its combinational chips."""
+"""Validate the generated DLS project structure, combinational logic, and NAND state."""
 from __future__ import annotations
 
 import json
@@ -7,7 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PROJECT = ROOT / "MISK16-DLS"
-FORBIDDEN = {"CLOCK", "PULSE", "3-STATE BUFFER", "BUS-1", "BUS-4", "BUS-8", "BUS-TERMINUS-1", "BUS-TERMINUS-4", "BUS-TERMINUS-8", "ROM 256×16", "dev.RAM-8"}
+FORBIDDEN = {"PULSE", "3-STATE BUFFER", "BUS-1", "BUS-4", "BUS-8", "BUS-TERMINUS-1", "BUS-TERMINUS-4", "BUS-TERMINUS-8", "ROM 256×16", "dev.RAM-8"}
 
 
 def load_project():
@@ -29,6 +29,9 @@ BUILTINS = {
     "OUT-1": ([0], [], [1], []),
     "OUT-4": ([0], [], [4], []),
     "OUT-8": ([0], [], [8], []),
+    "CLOCK": ([], [0], [], [1]),
+    "KEY": ([], [0], [], [1]),
+    "7-SEGMENT": (list(range(8)), [], [1] * 8, []),
 }
 
 
@@ -64,10 +67,20 @@ def validate_structure(manifest: dict, chips: dict[str, dict]) -> int:
     folded_names = [name.casefold() for name in manifest.get("AllCustomChipNames", [])]
     if len(folded_names) != len(set(folded_names)):
         errors.append("custom chip names are not unique case-insensitively")
+    collected_chips = set()
     for collection in manifest.get("ChipCollections", []):
-        missing_chips = set(collection.get("Chips", [])) - custom_names
+        listed = set(collection.get("Chips", []))
+        missing_chips = listed - custom_names
         if missing_chips:
             errors.append(f"collection {collection.get('Name')} references missing chips: {sorted(missing_chips)}")
+        collected_chips |= listed
+    unlisted_chips = custom_names - collected_chips
+    if unlisted_chips:
+        errors.append(f"custom chips are not discoverable in any collection: {sorted(unlisted_chips)}")
+    if "MISK16_COMPUTER" not in custom_names:
+        errors.append("the integrated MISK16_COMPUTER top-level chip is missing")
+    elif not manifest.get("ChipCollections") or "MISK16_COMPUTER" not in manifest["ChipCollections"][0].get("Chips", []):
+        errors.append("MISK16_COMPUTER must be the first chip in the open-first collection")
 
     for name, chip in chips.items():
         expected = {"DLSVersion", "Name", "NameLocation", "ChipType", "Size", "Colour", "InputPins", "OutputPins", "SubChips", "Wires", "Displays"}
@@ -91,6 +104,15 @@ def validate_structure(manifest: dict, chips: dict[str, dict]) -> int:
         child_owner_ids = set(children)
         if child_owner_ids & set(ext):
             errors.append(f"{name}: a subchip ID collides with an external pin owner ID")
+        display_ids = {display.get("SubChipID") for display in chip.get("Displays", [])}
+        if len(display_ids) != len(chip.get("Displays", [])):
+            errors.append(f"{name}: duplicate display metadata entries")
+        for display in chip.get("Displays", []):
+            display_child = children.get(display.get("SubChipID"))
+            if display_child is None or display_child.get("Name") != "7-SEGMENT":
+                errors.append(f"{name}: display metadata must reference a 7-SEGMENT child")
+            if not isinstance(display.get("Scale"), (int, float)) or display["Scale"] <= 0:
+                errors.append(f"{name}: invalid display scale")
         for child in chip["SubChips"]:
             if child["Name"] in FORBIDDEN:
                 errors.append(f"{name}: prohibited component {child['Name']}")
@@ -249,6 +271,12 @@ class CircuitSimulator:
         if name.startswith("IN-"):
             value = int(manual_inputs.get(label, 0)) & self._mask(obits[0])
             return {oids[0]: value}
+        if name == "CLOCK":
+            return {oids[0]: int(bool(manual_inputs.get("$CLOCK", 0)))}
+        if name == "KEY":
+            return {oids[0]: int(bool(manual_inputs.get(label, 0)))}
+        if name == "7-SEGMENT":
+            return {}
         if name.startswith("OUT-"):
             return {}
         if name == "NAND":
@@ -268,11 +296,277 @@ class CircuitSimulator:
         raise AssertionError(f"Unsupported DLS built-in in evaluator: {name}")
 
 
+class ClockedGateSimulator:
+    """Small event/settle simulator for the top NAND-only synchronous state network."""
+
+    def __init__(self, chips: dict[str, dict], combinational: CircuitSimulator):
+        self.chips = chips
+        self.combinational = combinational
+        self.desc = chips["MISK16_COMPUTER"]
+        self.children = {child["ID"]: child for child in self.desc["SubChips"]}
+        self.incoming = {owner_id: {} for owner_id in self.children}
+        self.outputs_to_outer = {}
+        for wire in self.desc["Wires"]:
+            source = wire["SourcePinAddress"]
+            target = wire["TargetPinAddress"]
+            if target["PinOwnerID"] in self.children:
+                self.incoming[target["PinOwnerID"]][target["PinID"]] = (source["PinOwnerID"], source["PinID"])
+            else:
+                self.outputs_to_outer[(target["PinOwnerID"], target["PinID"])] = (source["PinOwnerID"], source["PinID"])
+        self.values: dict[tuple[int, int], int] = {}
+        # Seed every raw NAND latch into a valid complementary state before reset.
+        for owner_id, child in self.children.items():
+            label = child.get("Label", "")
+            if label.endswith(("MASTER Q BAR", "SLAVE Q BAR")):
+                self.values[(owner_id, 2)] = 1
+            elif label.endswith(("MASTER Q", "SLAVE Q")):
+                self.values[(owner_id, 2)] = 0
+
+    def settle(self, *, clock: int, keys: dict[str, int], manual_inputs: dict[str, int] | None = None) -> dict[str, int]:
+        """Settle one fixed clock phase; update state only through the raw NAND netlist."""
+        manual = dict(manual_inputs or {})
+        manual["$CLOCK"] = int(bool(clock))
+        for child in self.children.values():
+            if child["Name"] == "KEY":
+                manual[child.get("Label", "")] = int(bool(keys.get(child.get("Label", ""), 0)))
+        max_sweeps = 500
+        for _sweep in range(max_sweeps):
+            changed = False
+            for owner_id, child in self.children.items():
+                name = child["Name"]
+                in_table = port_table(name, self.chips, False)
+                input_values = {}
+                ready = True
+                for pin_id, bits in in_table.items():
+                    source = self.incoming[owner_id].get(pin_id)
+                    if source is None:
+                        ready = False
+                        break
+                    source_owner, source_pin = source
+                    value = self.values.get((source_owner, source_pin), 0)
+                    input_values[pin_id] = value & ((1 << bits) - 1)
+                if not ready:
+                    raise AssertionError(f"Clocked circuit has unresolved input on {name}:{child.get('Label', '')}")
+
+                if name in self.chips:
+                    desc = self.chips[name]
+                    named_inputs = {pin["Name"]: input_values.get(pin["ID"], 0) for pin in desc["InputPins"]}
+                    named_outputs = self.combinational.evaluate(name, named_inputs)
+                    outputs = {pin["ID"]: named_outputs.get(pin["Name"], 0) for pin in desc["OutputPins"]}
+                else:
+                    outputs = self.combinational._eval_child(name, input_values, child.get("Label", ""), manual)
+                out_table = port_table(name, self.chips, True)
+                for pin_id, value in outputs.items():
+                    value &= (1 << out_table[pin_id]) - 1
+                    if self.values.get((owner_id, pin_id)) != value:
+                        self.values[(owner_id, pin_id)] = value
+                        changed = True
+            if not changed:
+                return self.outputs()
+        raise AssertionError(f"NAND state circuit did not settle at clock={clock}")
+
+    def outputs(self) -> dict[str, int]:
+        result = {}
+        for pin in self.desc["OutputPins"]:
+            source = self.outputs_to_outer.get((pin["ID"], 0))
+            if source is None:
+                result[pin["Name"]] = 0
+            else:
+                result[pin["Name"]] = self.values.get(source, 0) & ((1 << pin["BitCount"]) - 1)
+        return result
+
+
+def validate_clocked_computer(chips: dict[str, dict]) -> tuple[int, int]:
+    """Check raw-gate DFF topology, explicit reset/step paths, and allowed hardware."""
+    if "MISK16_COMPUTER" not in chips:
+        raise AssertionError("MISK16_COMPUTER is missing")
+    computer = chips["MISK16_COMPUTER"]
+    children = computer["SubChips"]
+    child_names = [child["Name"] for child in children]
+    if child_names.count("CLOCK") != 1 or child_names.count("KEY") != 2:
+        raise AssertionError("MISK16_COMPUTER must contain one CLOCK and exactly two KEY controls")
+    if child_names.count("7-SEGMENT") != 6 or len(computer["Displays"]) != 6:
+        raise AssertionError("MISK16_COMPUTER must expose six physical seven-segment digits")
+    if len(computer["InputPins"]) != 0:
+        raise AssertionError("the computer control panel should use its labeled IN chips and keys, not hidden external input pins")
+
+    allowed_builtin = {"NAND", "4-1BIT", "8-1BIT", "1-4BIT", "1-8BIT", "IN-1", "IN-4", "IN-8", "OUT-1", "OUT-4", "OUT-8", "CLOCK", "KEY", "7-SEGMENT"}
+    custom_names = set(chips)
+    for name, desc in chips.items():
+        for child in desc["SubChips"]:
+            if child["Name"] not in custom_names and child["Name"] not in allowed_builtin:
+                raise AssertionError(f"{name} uses an unapproved built-in component: {child['Name']}")
+            if child["Name"] == "CLOCK" and name != "MISK16_COMPUTER":
+                raise AssertionError(f"CLOCK is only allowed at the clocked computer top level, not in {name}")
+            if child["Name"] in ("KEY", "7-SEGMENT") and name != "MISK16_COMPUTER":
+                raise AssertionError(f"{child['Name']} is only allowed at the top display/control panel, not in {name}")
+
+    labels: dict[str, list[dict]] = {}
+    for child in children:
+        labels.setdefault(child.get("Label", ""), []).append(child)
+    gates = [child for child in children if child["Name"] == "NAND"]
+    if len(gates) < 2000:
+        raise AssertionError(f"expected a substantial NAND-built CPU state network, found {len(gates)} gates")
+
+    dff_suffixes = ("D BAR", "MASTER SET BAR", "MASTER RESET BAR", "MASTER Q", "MASTER Q BAR",
+                    "SLAVE DATA BAR", "SLAVE SET BAR", "SLAVE RESET BAR", "SLAVE Q", "SLAVE Q BAR")
+    dff_prefixes = ["STEP KEY HISTORY"]
+    for register in [f"R{i}_{half}" for i in range(8) for half in ("LO", "HI")] + ["PC"]:
+        dff_prefixes.extend(f"{register} BIT {bit}" for bit in range(8))
+    dff_prefixes.extend(f"{flag} STATE" for flag in ("FLAG_Z", "FLAG_N", "FLAG_C"))
+    if len(dff_prefixes) != 140:
+        raise AssertionError("validator state-bit accounting is inconsistent")
+    for prefix in dff_prefixes:
+        for suffix in dff_suffixes:
+            matches = labels.get(f"{prefix} {suffix}", [])
+            if len(matches) != 1 or matches[0]["Name"] != "NAND":
+                raise AssertionError(f"missing raw-NAND DFF stage {prefix} {suffix}")
+
+    for register in [f"R{i}_{half}" for i in range(8) for half in ("LO", "HI")] + ["PC"]:
+        for bit in range(8):
+            prefix = f"{register} BIT {bit}"
+            for suffix in (f"{prefix} HOLD", f"{prefix} LOAD", f"{prefix} MUX", f"{register} RESET {bit} NAND", f"{register} RESET {bit} INV"):
+                if len(labels.get(suffix, [])) != 1:
+                    raise AssertionError(f"missing clocked {register} step/reset gate {suffix}")
+    for flag in ("FLAG_Z", "FLAG_N", "FLAG_C"):
+        for suffix in (f"{flag} STEP HOLD", f"{flag} STEP LOAD", f"{flag} STEP MUX", f"{flag} RESET NAND", f"{flag} RESET INV"):
+            if len(labels.get(suffix, [])) != 1:
+                raise AssertionError(f"missing clocked flag step/reset gate {suffix}")
+
+    # Verify each cross-coupled NAND latch actually feeds back both complementary outputs.
+    child_by_id = {child["ID"]: child for child in children}
+    pin_source = {}
+    for wire in computer["Wires"]:
+        src, dst = wire["SourcePinAddress"], wire["TargetPinAddress"]
+        pin_source[(dst["PinOwnerID"], dst["PinID"])] = (src["PinOwnerID"], src["PinID"])
+    nand_inputs = {"IN B": 0, "IN A": 1}
+    for prefix in dff_prefixes:
+        for latch in ("MASTER", "SLAVE"):
+            q = labels[f"{prefix} {latch} Q"][0]["ID"]
+            qb = labels[f"{prefix} {latch} Q BAR"][0]["ID"]
+            for owner_id, pin_name, expected in (
+                (q, "IN B", qb),
+                (qb, "IN B", q),
+            ):
+                source = pin_source.get((owner_id, nand_inputs[pin_name]))
+                if source is None or source[0] != expected:
+                    raise AssertionError(f"{prefix} {latch} latch is missing its cross-coupled NAND feedback")
+
+    for pin_name in ("PC_CURRENT", "R0_LO_CURRENT", "R7_HI_CURRENT", "FLAG_Z_CURRENT", "FLAG_N_CURRENT", "FLAG_C_CURRENT"):
+        if pin_name not in {pin["Name"] for pin in computer["OutputPins"]}:
+            raise AssertionError(f"clocked state output {pin_name} is missing")
+    if "PC_NEXT" not in {pin["Name"] for pin in computer["OutputPins"]}:
+        raise AssertionError("CPU next-PC output is missing")
+    return len(gates), len(dff_prefixes)
+
+
 def set_opcode(values: dict[str, int], opcode_id: int, prefix: int = 0) -> None:
     values["TAG_PREFIX"] = prefix
     values["OP_ID_HI"] = (opcode_id >> 8) & 0xF
     values["OP_ID_MID"] = (opcode_id >> 4) & 0xF
     values["OP_ID_LO"] = opcode_id & 0xF
+
+
+def test_fast_cla16(sim: CircuitSimulator) -> int:
+    import random
+
+    rng = random.Random(0x16CA)
+    vectors = [(0, 0, 0), (0xFFFF, 1, 0), (0xFFFF, 0, 1), (0x5555, 0xAAAA, 1),
+               (0x7FFF, 1, 0), (0x8000, 0x8000, 0)]
+    vectors.extend((rng.randrange(0x10000), rng.randrange(0x10000), rng.randrange(2)) for _ in range(96))
+    for a, b, cin in vectors:
+        inputs = {f"A{i}": (a >> i) & 1 for i in range(16)}
+        inputs.update({f"B{i}": (b >> i) & 1 for i in range(16)})
+        inputs["CIN"] = cin
+        result = sim.evaluate("MISK16_CLA16", inputs)
+        total = a + b + cin
+        actual = sum(result[f"S{i}"] << i for i in range(16))
+        assert actual == (total & 0xFFFF), ("MISK16_CLA16", hex(a), hex(b), cin, hex(actual), hex(total & 0xFFFF))
+        assert result["COUT"] == (total >> 16)
+    return 2 * len(vectors)
+
+
+def test_clocked_state(chips: dict[str, dict], combinational: CircuitSimulator) -> int:
+    validate_clocked_computer(chips)
+    sim = ClockedGateSimulator(chips, combinational)
+    reset_label = "RESET PC / REGISTERS · 0"
+    step_label = "STEP ONE INSTRUCTION · 2"
+    manual = {"TAG_PREFIX": 0, "OP_ID_HI": 0, "OP_ID_MID": 0, "OP_ID_LO": 1,
+              "RA": 1, "RB": 2, "RD": 0, "IMM_LO": 0, "IMM_HI": 0}
+    keys = {reset_label: 1, step_label: 0}
+    checks = 0
+
+    # Synchronous reset clears the 8-bit PC, all 16-bit registers, and flags.
+    result = sim.settle(clock=0, keys=keys, manual_inputs=manual)
+    result = sim.settle(clock=1, keys=keys, manual_inputs=manual)
+    for name in [f"R{i}_{half}_CURRENT" for i in range(8) for half in ("LO", "HI")] + ["PC_CURRENT"]:
+        assert result[name] == 0, ("reset", name, result[name])
+    for name in ("FLAG_Z_CURRENT", "FLAG_N_CURRENT", "FLAG_C_CURRENT"):
+        assert result[name] == 0, ("reset", name, result[name])
+    checks += 20
+    sim.settle(clock=0, keys=keys, manual_inputs=manual)
+    keys[reset_label] = 0
+
+    def execute_one_instruction() -> dict[str, int]:
+        keys[step_label] = 1
+        sim.settle(clock=0, keys=keys, manual_inputs=manual)
+        result = sim.settle(clock=1, keys=keys, manual_inputs=manual)
+        # A low phase followed by a rising edge with KEY 2 released rearms the edge detector.
+        sim.settle(clock=0, keys=keys, manual_inputs=manual)
+        keys[step_label] = 0
+        sim.settle(clock=0, keys=keys, manual_inputs=manual)
+        sim.settle(clock=1, keys=keys, manual_inputs=manual)
+        sim.settle(clock=0, keys=keys, manual_inputs=manual)
+        return result
+
+    # Load two registers via LDI, then add them to prove PC and register state persist.
+    manual.update({"OP_ID_LO": 11, "RD": 1, "IMM_LO": 5})
+    result = execute_one_instruction()
+    assert result["R1_LO_CURRENT"] == 5 and result["PC_CURRENT"] == 1
+    checks += 2
+    manual.update({"RD": 2, "IMM_LO": 7})
+    result = execute_one_instruction()
+    assert result["R2_LO_CURRENT"] == 7 and result["PC_CURRENT"] == 2
+    checks += 2
+    manual.update({"OP_ID_LO": 1, "RD": 0, "RA": 1, "RB": 2})
+    result = execute_one_instruction()
+    assert result["EXEC_LO"] == 12 and result["R0_LO_CURRENT"] == 12
+    assert result["R0_HI_CURRENT"] == 0 and result["PC_CURRENT"] == 3
+    checks += 4
+
+    # A held key causes one instruction step total, not one per clock edge.
+    keys[step_label] = 1
+    sim.settle(clock=0, keys=keys, manual_inputs=manual)
+    result = sim.settle(clock=1, keys=keys, manual_inputs=manual)
+    assert result["PC_CURRENT"] == 4
+    sim.settle(clock=0, keys=keys, manual_inputs=manual)
+    result = sim.settle(clock=1, keys=keys, manual_inputs=manual)
+    assert result["PC_CURRENT"] == 4, "held step key must not execute repeatedly"
+    checks += 2
+
+    # Branch the 8-bit PC to 255, then verify the next sequential instruction wraps it to 0.
+    keys[step_label] = 0
+    sim.settle(clock=0, keys=keys, manual_inputs=manual)
+    sim.settle(clock=1, keys=keys, manual_inputs=manual)
+    sim.settle(clock=0, keys=keys, manual_inputs=manual)
+    manual.update({"OP_ID_MID": 1, "OP_ID_LO": 0, "BRANCH_TARGET": 255})
+    result = execute_one_instruction()
+    assert result["PC_CURRENT"] == 255
+    manual.update({"OP_ID_MID": 0, "OP_ID_LO": 11, "RD": 3, "IMM_LO": 1})
+    result = execute_one_instruction()
+    assert result["PC_CURRENT"] == 0 and result["R3_LO_CURRENT"] == 1
+    checks += 3
+
+    # Pressing the explicit reset key returns the PC, registers, and flags to zero.
+    keys[step_label] = 0
+    keys[reset_label] = 1
+    sim.settle(clock=0, keys=keys, manual_inputs=manual)
+    result = sim.settle(clock=1, keys=keys, manual_inputs=manual)
+    assert result["PC_CURRENT"] == 0 and result["R0_LO_CURRENT"] == 0
+    assert result["R1_LO_CURRENT"] == 0 and result["R2_LO_CURRENT"] == 0
+    assert result["R0_HI_CURRENT"] == 0 and result["FLAG_C_CURRENT"] == 0
+    checks += 6
+    return checks
 
 
 def test_logic(sim: CircuitSimulator) -> int:
@@ -360,6 +654,118 @@ def test_adders_and_alu(sim: CircuitSimulator) -> int:
             assert result["ZERO"] == int(expected == 0)
             assert result["NEGATIVE"] == ((expected >> 15) & 1)
             checks += 4
+    return checks
+
+
+def test_extended_computing_library(sim: CircuitSimulator) -> int:
+    checks = 0
+    mask = 0xFFFF
+    vectors = (0x0000, 0xFFFF, 0xA55A, 0x0FF0, 0x8001)
+    logic = {
+        "AND16": lambda a, b: a & b,
+        "OR16": lambda a, b: a | b,
+        "XOR16": lambda a, b: a ^ b,
+        "XNOR16": lambda a, b: (~(a ^ b)) & mask,
+        "NAND16": lambda a, b: (~(a & b)) & mask,
+        "NOR16": lambda a, b: (~(a | b)) & mask,
+    }
+    for a in vectors:
+        for b in vectors:
+            state = {"A_LO": a & 0xFF, "A_HI": a >> 8, "B_LO": b & 0xFF, "B_HI": b >> 8}
+            for chip, operation in logic.items():
+                out = sim.evaluate(chip, state)
+                actual = out["Y_LO"] | (out["Y_HI"] << 8)
+                assert actual == operation(a, b), (chip, hex(a), hex(b), hex(actual))
+                checks += 1
+            out = sim.evaluate("NOT16", {"A_LO": a & 0xFF, "A_HI": a >> 8})
+            actual = out["Y_LO"] | (out["Y_HI"] << 8)
+            assert actual == ((~a) & mask), ("NOT16", hex(a), hex(actual))
+            checks += 1
+
+    for a in (0, 1):
+        for b in (0, 1):
+            out = sim.evaluate("HALF_ADDER_1", {"A": a, "B": b})
+            assert out["SUM"] == (a ^ b)
+            assert out["COUT"] == (a & b)
+            checks += 2
+
+    arithmetic_vectors = ((0, 0), (mask, 1), (0x1234, 0xABCD), (0x8000, 0x8000), (7, 5))
+    for a, b in arithmetic_vectors:
+        for cin in (0, 1):
+            state = {"A_LO": a & 0xFF, "A_HI": a >> 8, "B_LO": b & 0xFF, "B_HI": b >> 8, "CIN": cin}
+            out = sim.evaluate("ADD16", state)
+            total = a + b + cin
+            actual = out["SUM_LO"] | (out["SUM_HI"] << 8)
+            assert actual == (total & mask), ("ADD16", hex(a), hex(b), cin, hex(actual))
+            assert out["COUT"] == (total >> 16)
+            checks += 2
+
+        state = {"A_LO": a & 0xFF, "A_HI": a >> 8, "B_LO": b & 0xFF, "B_HI": b >> 8}
+        out = sim.evaluate("SUB16", state)
+        actual = out["DIFF_LO"] | (out["DIFF_HI"] << 8)
+        assert actual == ((a - b) & mask), ("SUB16", hex(a), hex(b), hex(actual))
+        assert out["NO_BORROW"] == int(a >= b)
+        checks += 2
+
+    inc_values = {0, 1, 0x00FF, 0x0100, 0x7FFF, 0x8000, 0xFFFF, *range(256)}
+    inc_values.update(((i * 40503 + 17) & mask) for i in range(64))
+    for value in sorted(inc_values):
+        out = sim.evaluate("INC16", {"IN_LO": value & 0xFF, "IN_HI": value >> 8})
+        actual = out["OUT_LO"] | (out["OUT_HI"] << 8)
+        assert actual == ((value + 1) & mask), ("INC16", hex(value), hex(actual))
+        checks += 1
+
+    compare_values = (0, 1, 0x7FFF, 0x8000, 0xFFFF, 0xFFFF - 7, 0x1234, 0xABCD)
+    signed = lambda value: value - 0x10000 if value & 0x8000 else value
+    for a in compare_values:
+        for b in compare_values:
+            state = {"A_LO": a & 0xFF, "A_HI": a >> 8, "B_LO": b & 0xFF, "B_HI": b >> 8}
+            out = sim.evaluate("COMPARE16", state)
+            expected = {
+                "EQ": int(a == b), "NE": int(a != b),
+                "LT_U": int(a < b), "LE_U": int(a <= b), "GT_U": int(a > b), "GE_U": int(a >= b),
+                "LT_S": int(signed(a) < signed(b)), "LE_S": int(signed(a) <= signed(b)),
+                "GT_S": int(signed(a) > signed(b)), "GE_S": int(signed(a) >= signed(b)),
+            }
+            assert out == expected, ("COMPARE16", hex(a), hex(b), out, expected)
+            checks += len(expected)
+
+    for a, b, select in ((0xA55A, 0x0FF0, 0), (0xA55A, 0x0FF0, 1), (0, mask, 0), (0, mask, 1)):
+        state = {"A_LO": a & 0xFF, "A_HI": a >> 8, "B_LO": b & 0xFF, "B_HI": b >> 8, "SEL": select}
+        out = sim.evaluate("MUX2_16", state)
+        actual = out["Y_LO"] | (out["Y_HI"] << 8)
+        assert actual == (b if select else a)
+        checks += 1
+
+    for select in range(8):
+        state = {"SEL": select}
+        values = []
+        for index in range(8):
+            value = ((index * 7919) ^ (select * 0x1234)) & mask
+            values.append(value)
+            state[f"D{index}_LO"] = value & 0xFF
+            state[f"D{index}_HI"] = value >> 8
+        out = sim.evaluate("MUX8_16", state)
+        actual = out["Y_LO"] | (out["Y_HI"] << 8)
+        assert actual == values[select], ("MUX8_16", select, hex(actual), hex(values[select]))
+        checks += 1
+
+    segment_patterns = {
+        0: "abcdef", 1: "bc", 2: "abdeg", 3: "abcdg", 4: "bcfg", 5: "acdfg", 6: "acdefg", 7: "abc",
+        8: "abcdefg", 9: "abcdfg", 10: "abcefg", 11: "cdefg", 12: "adef", 13: "bcdeg", 14: "adefg", 15: "aefg",
+    }
+    for digit in range(4):
+        for value in range(16):
+            word = value << (digit * 4)
+            out = sim.evaluate("HEX_DISPLAY16", {"WORD_LO": word & 0xFF, "WORD_HI": word >> 8})
+            assert out[f"DIGIT_{digit}"] == value
+            for display_digit in range(4):
+                expected_nibble = (word >> (display_digit * 4)) & 0xF
+                assert out[f"DIGIT_{display_digit}"] == expected_nibble
+                for segment in "abcdefg":
+                    assert out[f"SEG_D{display_digit}_{segment.upper()}"] == int(segment in segment_patterns[expected_nibble])
+            checks += 4 + 28
+
     return checks
 
 
@@ -513,8 +919,12 @@ def main() -> None:
     manifest, chips = load_project()
     wire_count = validate_structure(manifest, chips)
     sim = CircuitSimulator(chips)
-    checks = test_logic(sim) + test_opcode_decoder(sim) + test_adders_and_alu(sim) + test_register_file(sim) + test_cpu_step(sim)
-    print(f"Validated DLS 2.1.6 project: {len(chips)} custom chips, {wire_count} point-to-point wires, {checks} logic checks.")
+    checks = (test_logic(sim) + test_fast_cla16(sim) + test_opcode_decoder(sim) + test_adders_and_alu(sim)
+              + test_extended_computing_library(sim) + test_register_file(sim) + test_cpu_step(sim)
+              + test_clocked_state(chips, sim))
+    nand_count = sum(child["Name"] == "NAND" for child in chips["MISK16_COMPUTER"]["SubChips"])
+    print(f"Validated DLS 2.1.6 project: {len(chips)} custom chips, {wire_count} point-to-point wires, "
+          f"{nand_count} top-level NAND gates, {checks} logic/state checks.")
 
 
 if __name__ == "__main__":
