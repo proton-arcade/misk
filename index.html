@@ -4,40 +4,68 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#10151d">
-  <title>MISK-16 | MPL Workbench</title>
+  <title>MISK-16 | 16-bit Computer Workbench</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <header class="topbar">
     <div class="brand"><div class="brand-mark">M</div><div><div class="eyebrow">MISK COMPUTER PROJECT</div><h1>MISK-16 <span>WORKBENCH</span></h1></div></div>
-    <div class="top-actions"><span class="status"><i></i> MANUAL STEP MODE</span><a href="MPL.md">MPL LANGUAGE GUIDE ↗</a></div>
+    <div class="top-actions"><span class="status" id="executionMode"><i></i><span id="executionModeLabel">MANUAL STEP MODE</span></span><a href="MPL.md">MPL LANGUAGE GUIDE ↗</a></div>
   </header>
   <main>
-    <section class="intro"><div><p class="eyebrow">16-BIT COMPUTER · EDITABLE STATE</p><h2>A small computer you can <em>understand.</em></h2><p>Write MPL assembly, load it into writable program RAM, edit registers directly, and execute one instruction at a time.</p></div><div class="spec"><div><b>16</b><span>BIT WORDS</span></div><div><b>8</b><span>GENERAL REGISTERS</span></div><div><b>256</b><span>RAM WORDS</span></div></div></section>
+    <section class="intro"><div><p class="eyebrow">16-BIT COMPUTER · EDITABLE STATE</p><h2>A small computer you can <em>understand.</em></h2><p>Program it in MPL assembly, edit registers directly, and step or run programs against writable instruction storage and 8 KiB of data RAM.</p></div><div class="spec"><div><b>16</b><span>BIT WORDS</span></div><div><b>8</b><span>GENERAL REGISTERS</span></div><div><b id="dataRamSpec">8 KiB</b><span>DATA RAM</span></div></div></section>
 
     <section class="workspace">
       <article class="panel editor-panel">
-        <div class="panel-head"><div><span class="step">01</span><h3>Program editor</h3></div><div class="panel-tools"><button class="quiet" id="exampleBtn">LOAD EXAMPLE</button><button class="primary" id="assembleBtn">ASSEMBLE → RAM</button></div></div>
+        <div class="panel-head"><div><span class="step">01</span><h3>Program editor</h3></div><div class="panel-tools"><button class="quiet" id="openProgramBtn">OPEN MPL</button><button class="quiet" id="saveProgramBtn">SAVE MPL</button><button class="quiet" id="exampleBtn">LOAD EXAMPLE</button><button class="primary" id="assembleBtn">ASSEMBLE → RAM</button><input id="programFile" type="file" accept=".mpl,.asm,.txt,text/plain" hidden></div></div>
         <div class="editor-wrap"><div class="line-numbers" id="lineNumbers"></div><textarea id="source" spellcheck="false" aria-label="MPL assembly editor"></textarea></div>
-        <div class="editor-foot"><span id="assemblyStatus">Ready · edits are local to this browser</span><span>HEX: 0x · DECIMAL: # or plain integer</span></div>
+        <div class="editor-foot"><span id="assemblyStatus">Ready · edits are local to this browser</span><span>HEX: 0x · BINARY: 0b · DECIMAL: # or plain integer</span></div>
         <div class="code-hint"><b>QUICK START</b><code>LDI R0, 7</code><code>ADDI R0, R0, 1</code><code>OUT R0</code><code>HALT</code></div>
       </article>
 
       <article class="panel machine-panel">
-        <div class="panel-head"><div><span class="step">02</span><h3>Machine controls</h3></div><div class="panel-tools"><button class="quiet" id="resetBtn">RESET STATE</button><button class="primary" id="stepBtn">STEP INSTRUCTION</button></div></div>
+        <div class="panel-head"><div><span class="step">02</span><h3>Machine controls</h3></div><div class="panel-tools"><button class="quiet" id="resetBtn">RESET STATE</button><button class="quiet" id="runBtn">RUN PROGRAM</button><button class="quiet" id="pauseBtn" disabled>PAUSE</button><button class="primary" id="stepBtn">STEP INSTRUCTION</button></div></div>
         <div class="machine-grid">
           <div class="register-area"><div class="section-label">GENERAL REGISTERS <span>EDIT ANY VALUE</span></div><div class="register-grid" id="registers"></div>
-            <div class="special-grid"><label class="special-register"><span>PROGRAM COUNTER <small>PC</small></span><input id="pcInput" type="number" min="0" max="255" value="0"></label><div class="special-register flags"><span>FLAGS <small>Z · N · C</small></span><b id="flagsValue">0 · 0 · 0</b></div></div>
-            <div class="io-row"><label for="inputValue">INPUT VALUE</label><input id="inputValue" type="number" value="0" min="-32768" max="65535"><div>OUTPUT <b id="outputValue">—</b></div></div>
+            <div class="special-grid"><label class="special-register"><span>PROGRAM COUNTER <small>PC</small></span><input id="pcInput" type="number" min="0" max="255" value="0"></label><div class="special-register flags"><span>FLAGS <small>EDIT Z · N · C</small></span><div class="flag-switches"><label>Z<input id="flagZ" type="checkbox" aria-label="Zero flag"></label><label>N<input id="flagN" type="checkbox" aria-label="Negative flag"></label><label>C<input id="flagC" type="checkbox" aria-label="Carry flag"></label></div></div></div>
+            <div class="io-row"><label for="inputValue">INPUT WORD</label><input id="inputValue" type="text" value="0" placeholder="0xABCD or 0b…" aria-label="Input word in decimal, hexadecimal, or binary"><div class="output-stack"><span>OUTPUT</span><b id="outputValue">—</b><small id="outputHex">HEX —</small><small id="outputBinary">BIN —</small></div></div>
           </div>
-          <div class="memory-area"><div class="section-label">PROGRAM RAM <span id="programCount">0 INSTRUCTIONS</span></div><div id="programMemory" class="memory-list empty">Assemble a program to write instructions into RAM.</div><div class="section-label data-heading">DATA RAM <span>256 × 16 · EDITABLE</span></div><div class="memory-page-controls"><button class="quiet" id="memoryPrev" aria-label="Previous data RAM page">←</button><label for="memoryPage">PAGE</label><input id="memoryPage" type="number" min="0" max="15" value="0"><span id="memoryRange">0x00–0x0F</span><button class="quiet" id="memoryNext" aria-label="Next data RAM page">→</button></div><div id="dataMemory" class="data-memory"></div></div>
+          <div class="memory-area"><div class="section-label">PROGRAM RAM <span id="programCount">0 / 256 INSTRUCTIONS</span></div><div id="programMemory" class="memory-list empty">Assemble a program to write instructions into writable program RAM.</div><div class="section-label data-heading">DATA RAM <span id="dataRamDetails">4,096 × 16 · 8 KiB · EDITABLE</span></div><div class="memory-page-controls"><button class="quiet" id="memoryPrev" aria-label="Previous data RAM page">←</button><label for="memoryPage">PAGE</label><input id="memoryPage" type="number" min="0" max="255" value="0" aria-label="Data RAM page, from 0 to 255"><span id="memoryRange">0x000–0x00F</span><button class="quiet" id="memoryNext" aria-label="Next data RAM page">→</button></div><div class="ram-actions"><button class="quiet" id="exportRamBtn">EXPORT 8 KiB</button><button class="quiet" id="importRamBtn">IMPORT .BIN</button><input id="ramFile" type="file" accept=".bin,application/octet-stream" hidden></div><div id="dataMemory" class="data-memory"></div></div>
         </div>
         <div class="log-strip"><span class="log-dot"></span><span id="machineMessage">Ready. Assemble a program or edit a register.</span></div>
       </article>
     </section>
-    <section class="architecture"><div class="architecture-copy"><p class="eyebrow">DESIGN RULES</p><h3>Direct connections.<br>Deliberate steps.</h3><p>The workbench models a register-centric 16-bit machine. No shared datapath bus, clock component, pulse generator, tri-state output, or ROM is used. Program instructions are loaded into writable RAM; a button click performs exactly one state transition.</p></div><div class="gate-card"><div class="section-label">LOGIC TOOLKIT <span>1-BIT PRIMITIVES</span></div><div class="gate-list"><span>NOT</span><span>AND</span><span>NAND</span><span>XOR</span><span>XNOR</span><span>OR</span><span>NOR</span></div><p>Build wider logic from gate collections. Prefer the highest available input count for gates and group repeated components into named collections.</p></div></section>
+    <section class="tools-grid" aria-label="Word conversion and logic tools">
+      <article class="panel converter-panel">
+        <div class="panel-head"><div><span class="step">03</span><h3>Binary ↔ hex word encoder</h3></div><span class="tool-tag">16 BITS</span></div>
+        <div class="base-converter">
+          <label class="base-field" for="hexWord">HEXADECIMAL WORD<input id="hexWord" type="text" value="0x0000" maxlength="6" spellcheck="false" autocomplete="off" aria-label="Hexadecimal word, up to four digits"></label>
+          <label class="base-field" for="binaryWord">BINARY WORD<input id="binaryWord" type="text" value="0000 0000 0000 0000" maxlength="21" spellcheck="false" autocomplete="off" aria-label="Binary word, up to sixteen bits"></label>
+        </div>
+        <div class="converter-status" id="wordStatus" role="status">Edit either representation or toggle individual bits.</div>
+        <div class="word-bit-grid" id="wordBits" aria-label="Sixteen interactive word bits"></div>
+        <div class="word-readout">
+          <div class="word-metadata"><div><span>UNSIGNED</span><b id="wordUnsigned">0</b></div><div><span>SIGNED</span><b id="wordSigned">0</b></div><div><span>HEX ENCODING</span><b id="wordHexReadout">0x0000</b></div></div>
+          <div class="seven-segment-display" id="hexDisplay" aria-label="Four digit seven-segment hexadecimal display"></div>
+        </div>
+        <div class="word-actions"><label for="wordRegister">REGISTER / PC<select id="wordRegister" aria-label="Register or program counter for binary and hex transfer"></select></label><button class="quiet" id="readRegisterBtn">READ CPU WORD</button><button class="primary" id="writeRegisterBtn">WRITE CPU WORD</button></div>
+      </article>
+
+      <article class="panel decoder-panel">
+        <div class="panel-head"><div><span class="step">04</span><h3>4-to-16 decoder / 16-to-4 encoder</h3></div><span class="tool-tag">ONE-HOT LOGIC</span></div>
+        <div class="decoder-body">
+          <label class="base-field" for="decoderInput">HEX DIGIT INPUT <select id="decoderInput" aria-label="Hex digit to decode"></select></label>
+          <div class="decoder-readout"><span>4-BIT BINARY</span><b id="decoderBinary">0000</b><span>ENCODER OUTPUT</span><b id="encodedDigit">0x0</b></div>
+          <div class="decoder-lights" id="decoderOutputs" aria-label="Sixteen one-hot decoder outputs"></div>
+          <div class="converter-status" id="decoderStatus" role="status">Exactly one D output is high; the encoder converts it back to the original digit.</div>
+        </div>
+      </article>
+    </section>
+
+    <section class="architecture"><div class="architecture-copy"><p class="eyebrow">DESIGN RULES</p><h3>Direct connections.<br>Deliberate steps.</h3><p>The workbench models a register-centric 16-bit machine with eight general registers, 256 writable program entries, and 4,096 editable 16-bit data words (8 KiB). No shared datapath bus, clock component, pulse generator, tri-state output, or ROM is used. STEP performs one software transition; RUN repeats those transitions until halted or paused—it is not a simulated hardware clock.</p></div><div class="gate-card"><div class="section-label">LOGIC TOOLKIT <span>1-BIT PRIMITIVES</span></div><div class="gate-list"><span>NOT</span><span>AND</span><span>NAND</span><span>XOR</span><span>XNOR</span><span>OR</span><span>NOR</span></div><p>Build wider logic from gate collections. Prefer the highest available input count for gates and group repeated components into named collections.</p></div></section>
     <footer><span>MISK-16 · MPL WORKBENCH</span><span>Digital Logic Sim circuit plan and full MPL reference: <a href="MPL.md">MPL.md</a> · <a href="DIGITAL-LOGIC-SIM.md">Digital Logic Sim build notes</a></span></footer>
   </main>
+  <script src="misk16.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

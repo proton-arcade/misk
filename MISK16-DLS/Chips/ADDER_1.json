@@ -1,0 +1,215 @@
+{
+  "DLSVersion": "2.1.6",
+  "Name": "ADDER_1",
+  "NameLocation": 0,
+  "ChipType": 0,
+  "Size": {
+    "x": 16.0,
+    "y": 14.0
+  },
+  "Colour": {
+    "r": 0.68,
+    "g": 0.39,
+    "b": 0.18,
+    "a": 1.0
+  },
+  "InputPins": [
+    {
+      "Name": "A0",
+      "ID": 929337207,
+      "Position": {
+        "x": -8.0,
+        "y": 0.75
+      },
+      "BitCount": 1,
+      "Colour": 0,
+      "ValueDisplayMode": 0
+    },
+    {
+      "Name": "B0",
+      "ID": 557416692,
+      "Position": {
+        "x": -8.0,
+        "y": 0.0
+      },
+      "BitCount": 1,
+      "Colour": 0,
+      "ValueDisplayMode": 0
+    },
+    {
+      "Name": "CIN",
+      "ID": 1836519897,
+      "Position": {
+        "x": -8.0,
+        "y": -0.75
+      },
+      "BitCount": 1,
+      "Colour": 0,
+      "ValueDisplayMode": 0
+    }
+  ],
+  "OutputPins": [
+    {
+      "Name": "S0",
+      "ID": 689482411,
+      "Position": {
+        "x": 8.0,
+        "y": 0.375
+      },
+      "BitCount": 1,
+      "Colour": 0,
+      "ValueDisplayMode": 0
+    },
+    {
+      "Name": "COUT",
+      "ID": 182941190,
+      "Position": {
+        "x": 8.0,
+        "y": -0.375
+      },
+      "BitCount": 1,
+      "Colour": 0,
+      "ValueDisplayMode": 0
+    }
+  ],
+  "SubChips": [
+    {
+      "Name": "FULL_ADDER_1",
+      "ID": 402586398,
+      "Label": "FA",
+      "Position": {
+        "x": 0,
+        "y": 0
+      },
+      "OutputPinColourInfo": [
+        {
+          "PinColour": 0,
+          "PinID": 1064803022
+        },
+        {
+          "PinColour": 0,
+          "PinID": 115826793
+        }
+      ],
+      "InternalData": null
+    }
+  ],
+  "Wires": [
+    {
+      "SourcePinAddress": {
+        "PinID": 0,
+        "PinOwnerID": 929337207
+      },
+      "TargetPinAddress": {
+        "PinID": 1752926394,
+        "PinOwnerID": 402586398
+      },
+      "ConnectionType": 0,
+      "ConnectedWireIndex": -1,
+      "ConnectedWireSegmentIndex": -1,
+      "Points": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 0,
+          "y": 0
+        }
+      ]
+    },
+    {
+      "SourcePinAddress": {
+        "PinID": 0,
+        "PinOwnerID": 557416692
+      },
+      "TargetPinAddress": {
+        "PinID": 571814365,
+        "PinOwnerID": 402586398
+      },
+      "ConnectionType": 0,
+      "ConnectedWireIndex": -1,
+      "ConnectedWireSegmentIndex": -1,
+      "Points": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 0,
+          "y": 0
+        }
+      ]
+    },
+    {
+      "SourcePinAddress": {
+        "PinID": 0,
+        "PinOwnerID": 1836519897
+      },
+      "TargetPinAddress": {
+        "PinID": 1100879768,
+        "PinOwnerID": 402586398
+      },
+      "ConnectionType": 0,
+      "ConnectedWireIndex": -1,
+      "ConnectedWireSegmentIndex": -1,
+      "Points": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 0,
+          "y": 0
+        }
+      ]
+    },
+    {
+      "SourcePinAddress": {
+        "PinID": 1064803022,
+        "PinOwnerID": 402586398
+      },
+      "TargetPinAddress": {
+        "PinID": 0,
+        "PinOwnerID": 689482411
+      },
+      "ConnectionType": 0,
+      "ConnectedWireIndex": -1,
+      "ConnectedWireSegmentIndex": -1,
+      "Points": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 0,
+          "y": 0
+        }
+      ]
+    },
+    {
+      "SourcePinAddress": {
+        "PinID": 115826793,
+        "PinOwnerID": 402586398
+      },
+      "TargetPinAddress": {
+        "PinID": 0,
+        "PinOwnerID": 182941190
+      },
+      "ConnectionType": 0,
+      "ConnectedWireIndex": -1,
+      "ConnectedWireSegmentIndex": -1,
+      "Points": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 0,
+          "y": 0
+        }
+      ]
+    }
+  ],
+  "Displays": []
+}
