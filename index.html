@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#10151d">
+  <title>MISK-16 | MPL Workbench</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><div class="brand-mark">M</div><div><div class="eyebrow">MISK COMPUTER PROJECT</div><h1>MISK-16 <span>WORKBENCH</span></h1></div></div>
+    <div class="top-actions"><span class="status"><i></i> MANUAL STEP MODE</span><a href="MPL.md">MPL LANGUAGE GUIDE ↗</a></div>
+  </header>
+  <main>
+    <section class="intro"><div><p class="eyebrow">16-BIT COMPUTER · EDITABLE STATE</p><h2>A small computer you can <em>understand.</em></h2><p>Write MPL assembly, load it into writable program RAM, edit registers directly, and execute one instruction at a time.</p></div><div class="spec"><div><b>16</b><span>BIT WORDS</span></div><div><b>8</b><span>GENERAL REGISTERS</span></div><div><b>256</b><span>RAM WORDS</span></div></div></section>
+
+    <section class="workspace">
+      <article class="panel editor-panel">
+        <div class="panel-head"><div><span class="step">01</span><h3>Program editor</h3></div><div class="panel-tools"><button class="quiet" id="exampleBtn">LOAD EXAMPLE</button><button class="primary" id="assembleBtn">ASSEMBLE → RAM</button></div></div>
+        <div class="editor-wrap"><div class="line-numbers" id="lineNumbers"></div><textarea id="source" spellcheck="false" aria-label="MPL assembly editor"></textarea></div>
+        <div class="editor-foot"><span id="assemblyStatus">Ready · edits are local to this browser</span><span>HEX: 0x · DECIMAL: # or plain integer</span></div>
+        <div class="code-hint"><b>QUICK START</b><code>LDI R0, 7</code><code>ADDI R0, R0, 1</code><code>OUT R0</code><code>HALT</code></div>
+      </article>
+
+      <article class="panel machine-panel">
+        <div class="panel-head"><div><span class="step">02</span><h3>Machine controls</h3></div><div class="panel-tools"><button class="quiet" id="resetBtn">RESET STATE</button><button class="primary" id="stepBtn">STEP INSTRUCTION</button></div></div>
+        <div class="machine-grid">
+          <div class="register-area"><div class="section-label">GENERAL REGISTERS <span>EDIT ANY VALUE</span></div><div class="register-grid" id="registers"></div>
+            <div class="special-grid"><label class="special-register"><span>PROGRAM COUNTER <small>PC</small></span><input id="pcInput" type="number" min="0" max="255" value="0"></label><div class="special-register flags"><span>FLAGS <small>Z · N · C</small></span><b id="flagsValue">0 · 0 · 0</b></div></div>
+            <div class="io-row"><label for="inputValue">INPUT VALUE</label><input id="inputValue" type="number" value="0" min="-32768" max="65535"><div>OUTPUT <b id="outputValue">—</b></div></div>
+          </div>
+          <div class="memory-area"><div class="section-label">PROGRAM RAM <span id="programCount">0 INSTRUCTIONS</span></div><div id="programMemory" class="memory-list empty">Assemble a program to write instructions into RAM.</div><div class="section-label data-heading">DATA RAM <span>256 × 16 · EDITABLE</span></div><div class="memory-page-controls"><button class="quiet" id="memoryPrev" aria-label="Previous data RAM page">←</button><label for="memoryPage">PAGE</label><input id="memoryPage" type="number" min="0" max="15" value="0"><span id="memoryRange">0x00–0x0F</span><button class="quiet" id="memoryNext" aria-label="Next data RAM page">→</button></div><div id="dataMemory" class="data-memory"></div></div>
+        </div>
+        <div class="log-strip"><span class="log-dot"></span><span id="machineMessage">Ready. Assemble a program or edit a register.</span></div>
+      </article>
+    </section>
+    <section class="architecture"><div class="architecture-copy"><p class="eyebrow">DESIGN RULES</p><h3>Direct connections.<br>Deliberate steps.</h3><p>The workbench models a register-centric 16-bit machine. No shared datapath bus, clock component, pulse generator, tri-state output, or ROM is used. Program instructions are loaded into writable RAM; a button click performs exactly one state transition.</p></div><div class="gate-card"><div class="section-label">LOGIC TOOLKIT <span>1-BIT PRIMITIVES</span></div><div class="gate-list"><span>NOT</span><span>AND</span><span>NAND</span><span>XOR</span><span>XNOR</span><span>OR</span><span>NOR</span></div><p>Build wider logic from gate collections. Prefer the highest available input count for gates and group repeated components into named collections.</p></div></section>
+    <footer><span>MISK-16 · MPL WORKBENCH</span><span>Digital Logic Sim circuit plan and full MPL reference: <a href="MPL.md">MPL.md</a> · <a href="DIGITAL-LOGIC-SIM.md">Digital Logic Sim build notes</a></span></footer>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>
