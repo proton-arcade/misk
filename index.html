@@ -4,16 +4,82 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#10151d">
-  <title>MISK-16 | 16-bit Computer Workbench</title>
+  <meta name="description" content="A Linux-inspired terminal and text editor running inside the MISK-16 educational computer emulator.">
+  <title>MISK-16 | MISK Linux Computer</title>
   <link rel="stylesheet" href="style.css">
 </head>
-<body>
+<body class="os-mode">
   <header class="topbar">
-    <div class="brand"><div class="brand-mark">M</div><div><div class="eyebrow">MISK COMPUTER PROJECT</div><h1>MISK-16 <span>WORKBENCH</span></h1></div></div>
-    <div class="top-actions"><span class="status" id="executionMode"><i></i><span id="executionModeLabel">MANUAL STEP MODE</span></span><a href="MPL.md">MPL LANGUAGE GUIDE ↗</a></div>
+    <div class="brand"><div class="brand-mark">M</div><div><div class="eyebrow">MISK COMPUTER PROJECT</div><h1>MISK-16 <span>COMPUTER</span></h1></div></div>
+    <div class="top-actions">
+      <nav class="mode-switch" aria-label="Computer view">
+        <button type="button" class="mode-tab" id="workbenchModeBtn" aria-pressed="false">WORKBENCH</button>
+        <button type="button" class="mode-tab active" id="osModeBtn" aria-pressed="true">MISK OS</button>
+      </nav>
+      <span class="status" id="executionMode"><i></i><span id="executionModeLabel">MISK OS READY</span></span>
+      <a href="MPL.md">MPL GUIDE ↗</a>
+    </div>
   </header>
   <main>
     <section class="intro"><div><p class="eyebrow">16-BIT COMPUTER · EDITABLE STATE</p><h2>A small computer you can <em>understand.</em></h2><p>Program it in MPL assembly, edit registers directly, and step or run programs against writable instruction storage and 8 KiB of data RAM.</p></div><div class="spec"><div><b>16</b><span>BIT WORDS</span></div><div><b>8</b><span>GENERAL REGISTERS</span></div><div><b id="dataRamSpec">8 KiB</b><span>DATA RAM</span></div></div></section>
+
+    <section class="os-view" id="osView" aria-label="MISK Linux terminal">
+      <div class="os-intro">
+        <div>
+          <p class="eyebrow">MISK LINUX · TEXT MODE · TTY1</p>
+          <h2>A terminal for your <em>MISK computer.</em></h2>
+          <p>A Linux-inspired learning shell running on the MISK-16 emulator. Type commands, edit virtual files, and run MPL programs without leaving the screen.</p>
+        </div>
+        <div class="os-readout"><span><i></i> VIRTUAL DISK ONLINE</span><span>16-BIT USERLAND</span><span>LOCAL TO THIS BROWSER</span></div>
+      </div>
+
+      <article class="panel terminal-monitor" aria-label="MISK Linux virtual computer screen">
+        <div class="monitor-bezel">
+          <div class="monitor-topbar">
+            <div class="monitor-title"><span class="screen-led"></span><b>MISK LINUX 0.1</b><span>VIRTUAL CONSOLE / TTY1</span></div>
+            <button class="quiet" id="osRebootBtn" type="button">REBOOT OS</button>
+          </div>
+          <div class="terminal-screen" id="terminalScreen">
+            <div class="terminal-output" id="osOutput" role="log" aria-live="polite" aria-relevant="additions"></div>
+            <section class="nano-screen" id="osEditorPanel" aria-label="Terminal text editor" hidden>
+              <div class="nano-title"><span>GNU nano — MISK virtual editor</span><span id="osEditorPath">/home/guest/notes.txt</span></div>
+              <div class="nano-document">
+                <pre class="nano-line-numbers" id="osEditorLines" aria-hidden="true">1</pre>
+                <textarea id="osEditor" spellcheck="false" autocomplete="off" autocapitalize="off" aria-label="Text file contents"></textarea>
+              </div>
+              <div class="nano-status" id="osEditorStatus">New file</div>
+              <div class="nano-shortcuts"><span><kbd>CTRL</kbd>+<kbd>S</kbd> Save</span><span><kbd>CTRL</kbd>+<kbd>X</kbd> Exit</span><span><kbd>TAB</kbd> Indent</span></div>
+              <div class="nano-actions"><button class="quiet" id="osEditorCancelBtn" type="button">DISCARD &amp; EXIT</button><button class="primary" id="osEditorSaveBtn" type="button">SAVE FILE</button><button class="quiet" id="osEditorSaveExitBtn" type="button">SAVE &amp; EXIT</button></div>
+            </section>
+            <form class="terminal-command-row" id="osCommandForm" autocomplete="off">
+              <span class="terminal-prompt" id="osPrompt">guest@misk16:~$</span>
+              <label class="visually-hidden" for="osCommandInput">Terminal command</label>
+              <input id="osCommandInput" type="text" spellcheck="false" autocomplete="off" autocapitalize="off" aria-label="Type a MISK Linux shell command">
+              <button type="submit" class="terminal-enter">ENTER ↵</button>
+            </form>
+            <div class="terminal-footer"><span>misk-sh</span><span>CTRL+L CLEAR</span><span>FILES ARE VIRTUAL · HOST OS IS UNTOUCHED</span></div>
+          </div>
+          <div class="monitor-lip"><span>MISK-16</span><span class="monitor-power"><i></i> POWER</span></div>
+        </div>
+      </article>
+
+      <div class="os-bottom-grid">
+        <article class="panel os-quickstart">
+          <div class="panel-head"><div><span class="step">01</span><h3>Try a command</h3></div><span class="tool-tag">CLICK TO TYPE</span></div>
+          <div class="os-command-list">
+            <button type="button" data-os-command="help"><code>help</code><span>Shell guide</span></button>
+            <button type="button" data-os-command="ls -la"><code>ls -la</code><span>List home files</span></button>
+            <button type="button" data-os-command="nano notes.txt"><code>nano notes.txt</code><span>Open text editor</span></button>
+            <button type="button" data-os-command="run hello.mpl"><code>run hello.mpl</code><span>Run an MPL program</span></button>
+            <button type="button" data-os-command="lscpu"><code>lscpu</code><span>Inspect the computer</span></button>
+          </div>
+        </article>
+        <article class="panel os-about">
+          <div class="panel-head"><div><span class="step">02</span><h3>What this OS is</h3></div><span class="tool-tag">SIMULATION</span></div>
+          <div class="os-about-copy"><p><b>MISK Linux</b> is an original, Linux-inspired text environment—not the Linux kernel. It runs safely inside this browser on the MISK-16 software machine.</p><p>Use <code>nano FILE</code> to edit virtual files, <code>compile FILE.mpl</code> to load a program, or <code>run FILE.mpl</code> to assemble and execute it. The virtual disk persists in this browser; it cannot read or run files from your computer.</p></div>
+        </article>
+      </div>
+    </section>
 
     <section class="workspace">
       <article class="panel editor-panel">
@@ -63,9 +129,11 @@
     </section>
 
     <section class="architecture"><div class="architecture-copy"><p class="eyebrow">DESIGN RULES</p><h3>Direct connections.<br>Deliberate steps.</h3><p>The workbench models a register-centric 16-bit machine with eight general registers, 256 writable program entries, and 4,096 editable 16-bit data words (8 KiB). No shared datapath bus, clock component, pulse generator, tri-state output, or ROM is used. STEP performs one software transition; RUN repeats those transitions until halted or paused—it is not a simulated hardware clock.</p></div><div class="gate-card"><div class="section-label">LOGIC TOOLKIT <span>1-BIT PRIMITIVES</span></div><div class="gate-list"><span>NOT</span><span>AND</span><span>NAND</span><span>XOR</span><span>XNOR</span><span>OR</span><span>NOR</span></div><p>Build wider logic from gate collections. Prefer the highest available input count for gates and group repeated components into named collections.</p></div></section>
-    <footer><span>MISK-16 · MPL WORKBENCH</span><span>Digital Logic Sim circuit plan and full MPL reference: <a href="MPL.md">MPL.md</a> · <a href="DIGITAL-LOGIC-SIM.md">Digital Logic Sim build notes</a></span></footer>
+    <footer><span>MISK-16 · TEXT COMPUTER</span><span>Guides: <a href="MISK-OS.md">MISK Linux shell</a> · <a href="MPL.md">MPL language</a> · <a href="DIGITAL-LOGIC-SIM.md">DLS build notes</a></span></footer>
   </main>
   <script src="misk16.js"></script>
+  <script src="miskos.js"></script>
   <script src="app.js"></script>
+  <script src="terminal-os.js"></script>
 </body>
 </html>

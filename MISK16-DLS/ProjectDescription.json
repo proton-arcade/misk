@@ -2,8 +2,8 @@
   "ProjectName": "MISK16-DLS",
   "DLSVersion_LastSaved": "2.1.6",
   "DLSVersion_EarliestCompatible": "2.0.0",
-  "CreationTime": "2026-10-08T06:22:20.859+00:00",
-  "LastSaveTime": "2026-10-08T06:22:20.859+00:00",
+  "CreationTime": "2026-10-08T11:34:05.547+00:00",
+  "LastSaveTime": "2026-10-08T11:34:05.547+00:00",
   "Prefs_MainPinNamesDisplayMode": 1,
   "Prefs_ChipPinNamesDisplayMode": 1,
   "Prefs_GridDisplayMode": 1,
@@ -36,6 +36,7 @@
     "MUX8_1",
     "MUX8_8",
     "ZERO16",
+    "MISK16_CLA16",
     "ALU16",
     "OPCODE_DECODER",
     "REGISTER_FILE_MANUAL",
@@ -44,6 +45,22 @@
     "INC8",
     "RESULT_MUX5_8",
     "MISK16_CPU_STEP",
+    "AND16",
+    "OR16",
+    "XOR16",
+    "XNOR16",
+    "NAND16",
+    "NOR16",
+    "NOT16",
+    "HALF_ADDER_1",
+    "ADD16",
+    "SUB16",
+    "MUX2_16",
+    "MUX8_16",
+    "INC16",
+    "COMPARE16",
+    "HEX_DISPLAY16",
+    "MISK16_COMPUTER",
     "MISK16_TESTBENCH"
   ],
   "StarredList": [
@@ -56,13 +73,14 @@
     {
       "Name": "00 \u00b7 Open this first",
       "Chips": [
-        "MISK16_TESTBENCH",
-        "MISK16_CPU_STEP"
+        "MISK16_COMPUTER",
+        "MISK16_CPU_STEP",
+        "MISK16_TESTBENCH"
       ],
       "IsToggledOpen": true
     },
     {
-      "Name": "01 \u00b7 Primitive logic",
+      "Name": "01 \u00b7 Logic gates",
       "Chips": [
         "INV",
         "AND",
@@ -72,40 +90,53 @@
         "NOR",
         "AND3",
         "AND4",
-        "OR_REDUCE8"
+        "OR_REDUCE8",
+        "AND16",
+        "OR16",
+        "XOR16",
+        "XNOR16",
+        "NAND16",
+        "NOR16",
+        "NOT16"
       ],
       "IsToggledOpen": false
     },
     {
-      "Name": "02 \u00b7 Adders",
+      "Name": "02 \u00b7 Arithmetic and compare",
       "Chips": [
+        "HALF_ADDER_1",
         "FULL_ADDER_1",
         "ADDER_1",
         "ADDER_2",
         "ADDER_4",
         "ADDER_8",
-        "ADDER_16"
+        "ADDER_16",
+        "MISK16_CLA16",
+        "ADD16",
+        "SUB16",
+        "INC8",
+        "INC16",
+        "COMPARE16",
+        "ZERO16",
+        "ALU16"
       ],
       "IsToggledOpen": false
     },
     {
-      "Name": "03 \u00b7 Word logic and tools",
+      "Name": "03 \u00b7 Multiplexers and data routing",
       "Chips": [
         "MUX2_1",
         "MUX2_8",
+        "MUX2_16",
         "MUX8_1",
         "MUX8_8",
-        "ZERO16",
-        "ALU16",
-        "DECODER4TO16",
-        "ENCODER16TO4",
-        "HEX7SEG",
+        "MUX8_16",
         "RESULT_MUX5_8"
       ],
       "IsToggledOpen": false
     },
     {
-      "Name": "04 \u00b7 CPU",
+      "Name": "04 \u00b7 CPU core and interfaces",
       "Chips": [
         "OPCODE_DECODER",
         "REGISTER_FILE_READ",
@@ -113,6 +144,16 @@
         "REGISTER_FILE_MANUAL",
         "INC8",
         "MISK16_CPU_STEP"
+      ],
+      "IsToggledOpen": false
+    },
+    {
+      "Name": "05 \u00b7 Decode and displays",
+      "Chips": [
+        "DECODER4TO16",
+        "ENCODER16TO4",
+        "HEX7SEG",
+        "HEX_DISPLAY16"
       ],
       "IsToggledOpen": false
     }

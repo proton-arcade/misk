@@ -1,0 +1,318 @@
+{
+  "DLSVersion": "2.1.6",
+  "Name": "MUX2_16",
+  "NameLocation": 0,
+  "ChipType": 0,
+  "Size": {
+    "x": 20,
+    "y": 14
+  },
+  "Colour": {
+    "r": 0.54,
+    "g": 0.4,
+    "b": 0.2,
+    "a": 1.0
+  },
+  "InputPins": [
+    {
+      "Name": "A_LO",
+      "ID": 434627636,
+      "Position": {
+        "x": -10.0,
+        "y": 1.5
+      },
+      "BitCount": 8,
+      "Colour": 0,
+      "ValueDisplayMode": 3
+    },
+    {
+      "Name": "A_HI",
+      "ID": 17418767,
+      "Position": {
+        "x": -10.0,
+        "y": 0.75
+      },
+      "BitCount": 8,
+      "Colour": 0,
+      "ValueDisplayMode": 3
+    },
+    {
+      "Name": "B_LO",
+      "ID": 1661655187,
+      "Position": {
+        "x": -10.0,
+        "y": 0.0
+      },
+      "BitCount": 8,
+      "Colour": 0,
+      "ValueDisplayMode": 3
+    },
+    {
+      "Name": "B_HI",
+      "ID": 1241068240,
+      "Position": {
+        "x": -10.0,
+        "y": -0.75
+      },
+      "BitCount": 8,
+      "Colour": 0,
+      "ValueDisplayMode": 3
+    },
+    {
+      "Name": "SEL",
+      "ID": 582195315,
+      "Position": {
+        "x": -10.0,
+        "y": -1.5
+      },
+      "BitCount": 1,
+      "Colour": 0,
+      "ValueDisplayMode": 0
+    }
+  ],
+  "OutputPins": [
+    {
+      "Name": "Y_LO",
+      "ID": 166222346,
+      "Position": {
+        "x": 10.0,
+        "y": 0.375
+      },
+      "BitCount": 8,
+      "Colour": 0,
+      "ValueDisplayMode": 3
+    },
+    {
+      "Name": "Y_HI",
+      "ID": 929290090,
+      "Position": {
+        "x": 10.0,
+        "y": -0.375
+      },
+      "BitCount": 8,
+      "Colour": 0,
+      "ValueDisplayMode": 3
+    }
+  ],
+  "SubChips": [
+    {
+      "Name": "MUX2_8",
+      "ID": 145902035,
+      "Label": "MUX LO",
+      "Position": {
+        "x": 0,
+        "y": 2
+      },
+      "OutputPinColourInfo": [
+        {
+          "PinColour": 0,
+          "PinID": 338007995
+        }
+      ],
+      "InternalData": null
+    },
+    {
+      "Name": "MUX2_8",
+      "ID": 1706882377,
+      "Label": "MUX HI",
+      "Position": {
+        "x": 0,
+        "y": -2
+      },
+      "OutputPinColourInfo": [
+        {
+          "PinColour": 0,
+          "PinID": 338007995
+        }
+      ],
+      "InternalData": null
+    }
+  ],
+  "Wires": [
+    {
+      "SourcePinAddress": {
+        "PinID": 0,
+        "PinOwnerID": 434627636
+      },
+      "TargetPinAddress": {
+        "PinID": 878431690,
+        "PinOwnerID": 145902035
+      },
+      "ConnectionType": 0,
+      "ConnectedWireIndex": -1,
+      "ConnectedWireSegmentIndex": -1,
+      "Points": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 0,
+          "y": 0
+        }
+      ]
+    },
+    {
+      "SourcePinAddress": {
+        "PinID": 0,
+        "PinOwnerID": 1661655187
+      },
+      "TargetPinAddress": {
+        "PinID": 492490203,
+        "PinOwnerID": 145902035
+      },
+      "ConnectionType": 0,
+      "ConnectedWireIndex": -1,
+      "ConnectedWireSegmentIndex": -1,
+      "Points": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 0,
+          "y": 0
+        }
+      ]
+    },
+    {
+      "SourcePinAddress": {
+        "PinID": 0,
+        "PinOwnerID": 582195315
+      },
+      "TargetPinAddress": {
+        "PinID": 922682606,
+        "PinOwnerID": 145902035
+      },
+      "ConnectionType": 0,
+      "ConnectedWireIndex": -1,
+      "ConnectedWireSegmentIndex": -1,
+      "Points": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 0,
+          "y": 0
+        }
+      ]
+    },
+    {
+      "SourcePinAddress": {
+        "PinID": 338007995,
+        "PinOwnerID": 145902035
+      },
+      "TargetPinAddress": {
+        "PinID": 0,
+        "PinOwnerID": 166222346
+      },
+      "ConnectionType": 0,
+      "ConnectedWireIndex": -1,
+      "ConnectedWireSegmentIndex": -1,
+      "Points": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 0,
+          "y": 0
+        }
+      ]
+    },
+    {
+      "SourcePinAddress": {
+        "PinID": 0,
+        "PinOwnerID": 17418767
+      },
+      "TargetPinAddress": {
+        "PinID": 878431690,
+        "PinOwnerID": 1706882377
+      },
+      "ConnectionType": 0,
+      "ConnectedWireIndex": -1,
+      "ConnectedWireSegmentIndex": -1,
+      "Points": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 0,
+          "y": 0
+        }
+      ]
+    },
+    {
+      "SourcePinAddress": {
+        "PinID": 0,
+        "PinOwnerID": 1241068240
+      },
+      "TargetPinAddress": {
+        "PinID": 492490203,
+        "PinOwnerID": 1706882377
+      },
+      "ConnectionType": 0,
+      "ConnectedWireIndex": -1,
+      "ConnectedWireSegmentIndex": -1,
+      "Points": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 0,
+          "y": 0
+        }
+      ]
+    },
+    {
+      "SourcePinAddress": {
+        "PinID": 0,
+        "PinOwnerID": 582195315
+      },
+      "TargetPinAddress": {
+        "PinID": 922682606,
+        "PinOwnerID": 1706882377
+      },
+      "ConnectionType": 0,
+      "ConnectedWireIndex": -1,
+      "ConnectedWireSegmentIndex": -1,
+      "Points": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 0,
+          "y": 0
+        }
+      ]
+    },
+    {
+      "SourcePinAddress": {
+        "PinID": 338007995,
+        "PinOwnerID": 1706882377
+      },
+      "TargetPinAddress": {
+        "PinID": 0,
+        "PinOwnerID": 929290090
+      },
+      "ConnectionType": 0,
+      "ConnectedWireIndex": -1,
+      "ConnectedWireSegmentIndex": -1,
+      "Points": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 0,
+          "y": 0
+        }
+      ]
+    }
+  ],
+  "Displays": []
+}

@@ -106,7 +106,8 @@ function render() {
   $('stepBtn').disabled = state.halted || runActive;
   $('runBtn').disabled = state.halted || runActive || state.program.length === 0;
   $('pauseBtn').disabled = !runActive;
-  $('executionModeLabel').textContent = runActive ? 'RUNNING · SOFTWARE STEPS' : 'MANUAL STEP MODE';
+  $('executionModeLabel').textContent = runActive ? 'RUNNING · SOFTWARE STEPS'
+    : document.body.classList.contains('os-mode') ? 'MISK OS · READY' : 'MANUAL STEP MODE';
   $('executionMode').classList.toggle('is-running', runActive);
 }
 
@@ -316,17 +317,58 @@ function step() {
   render();
 }
 
-function assembleToRAM() {
+function updateSourceEditor(source) {
+  $('source').value = String(source);
+  $('source').dispatchEvent(new Event('input'));
+}
+
+function assembleSource(source, sourcePath = 'terminal source') {
   stopProgram(false);
+  updateSourceEditor(source);
   try {
     const program = loadProgram(state, $('source').value);
     $('assemblyStatus').textContent = `Assembled ${program.length} / ${PROGRAM_RAM_WORDS} instructions · written to program RAM`;
-    message(`Program loaded into writable RAM · ${program.length} instruction${program.length === 1 ? '' : 's'}.`);
+    message(`${sourcePath}: assembled ${program.length} instruction${program.length === 1 ? '' : 's'} into writable program RAM.`);
     render();
+    return { success: true, instructionCount: program.length };
   } catch (error) {
     $('assemblyStatus').textContent = 'Assembly error';
     message(error.message, true);
+    return { success: false, error: error.message };
   }
+}
+
+function runSource(source, sourcePath = 'terminal source') {
+  stopProgram(false);
+  updateSourceEditor(source);
+  try {
+    const program = loadProgram(state, $('source').value);
+    $('assemblyStatus').textContent = `Assembled ${program.length} / ${PROGRAM_RAM_WORDS} instructions · written to program RAM`;
+    const outputs = [];
+    let steps = 0;
+    while (!state.halted && steps < RUN_STEP_LIMIT) {
+      const result = executeInstruction(state);
+      if (result.type !== 'executed') throw new Error(result.message);
+      if (result.instruction.op === 'OUT') outputs.push(state.output);
+      steps++;
+    }
+    const halted = Boolean(state.halted);
+    message(halted
+      ? `${sourcePath}: halted after ${steps.toLocaleString()} instructions.`
+      : `${sourcePath}: stopped at the ${RUN_STEP_LIMIT.toLocaleString()}-instruction safety limit.`, !halted);
+    render();
+    return { success: true, instructionCount: steps, programLength: program.length, outputs, halted };
+  } catch (error) {
+    $('assemblyStatus').textContent = 'Assembly / execution error';
+    message(error.message, true);
+    render();
+    return { success: false, error: error.message };
+  }
+}
+
+function assembleToRAM() {
+  const result = assembleSource($('source').value, 'Workbench source');
+  if (!result.success) return;
 }
 
 function openProgramFile(event) {
@@ -356,6 +398,43 @@ function importRamFile(event) {
   });
 }
 
+function resetComputer() {
+  stopProgram(false);
+  resetMachine(state);
+  $('inputValue').value = '0';
+  message('Registers, flags, data RAM, input, and output reset. Program RAM was kept.');
+  render();
+}
+
+function machineSnapshot() {
+  let dataUsedWords = 0;
+  for (const value of state.memory) if (value !== 0) dataUsedWords++;
+  return {
+    wordBits: 16,
+    registers: [...state.regs],
+    pc: state.pc,
+    flags: { z: state.z, n: state.n, c: state.c },
+    output: state.output,
+    halted: state.halted,
+    programCount: state.program.length,
+    programCapacity: PROGRAM_RAM_WORDS,
+    dataWords: DATA_RAM_WORDS,
+    dataBytes: DATA_RAM_BYTES,
+    dataUsedWords,
+  };
+}
+
+function setAppMode(mode) {
+  const selectedMode = mode === 'os' ? 'os' : 'workbench';
+  document.body.classList.toggle('os-mode', selectedMode === 'os');
+  $('osModeBtn').classList.toggle('active', selectedMode === 'os');
+  $('workbenchModeBtn').classList.toggle('active', selectedMode === 'workbench');
+  $('osModeBtn').setAttribute('aria-pressed', String(selectedMode === 'os'));
+  $('workbenchModeBtn').setAttribute('aria-pressed', String(selectedMode === 'workbench'));
+  if (!runActive) $('executionModeLabel').textContent = selectedMode === 'os' ? 'MISK OS · READY' : 'MANUAL STEP MODE';
+  window.dispatchEvent(new CustomEvent('misk:mode', { detail: { mode: selectedMode } }));
+}
+
 $('source').value = DEFAULT_PROGRAM;
 $('source').addEventListener('input', () => {
   if (runActive) stopProgram(false);
@@ -372,13 +451,7 @@ $('assembleBtn').addEventListener('click', assembleToRAM);
 $('stepBtn').addEventListener('click', step);
 $('runBtn').addEventListener('click', startProgram);
 $('pauseBtn').addEventListener('click', () => stopProgram(true));
-$('resetBtn').addEventListener('click', () => {
-  stopProgram(false);
-  resetMachine(state);
-  $('inputValue').value = '0';
-  message('Registers, flags, data RAM, input, and output reset. Program RAM was kept.');
-  render();
-});
+$('resetBtn').addEventListener('click', resetComputer);
 $('pcInput').addEventListener('change', event => {
   state.pc = toWord(event.target.value) & PROGRAM_ADDRESS_MASK;
   stopProgram(false);
@@ -427,5 +500,15 @@ $('programFile').addEventListener('change', openProgramFile);
 $('binaryWord').addEventListener('input', () => handleConverterInput('binaryWord', parseBinaryWord, 'binary'));
 $('hexWord').addEventListener('input', () => handleConverterInput('hexWord', parseHexWord, 'hexadecimal'));
 
+$('workbenchModeBtn').addEventListener('click', () => setAppMode('workbench'));
+$('osModeBtn').addEventListener('click', () => setAppMode('os'));
 initializeLogicTools();
 render();
+
+window.MISKWorkbench = Object.freeze({
+  assembleMPL: assembleSource,
+  runMPL: runSource,
+  reset: resetComputer,
+  snapshot: machineSnapshot,
+  setMode: setAppMode,
+});
