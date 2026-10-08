@@ -1,0 +1,120 @@
+{
+  "ProjectName": "MISK16-DLS",
+  "DLSVersion_LastSaved": "2.1.6",
+  "DLSVersion_EarliestCompatible": "2.0.0",
+  "CreationTime": "2026-10-08T06:22:20.859+00:00",
+  "LastSaveTime": "2026-10-08T06:22:20.859+00:00",
+  "Prefs_MainPinNamesDisplayMode": 1,
+  "Prefs_ChipPinNamesDisplayMode": 1,
+  "Prefs_GridDisplayMode": 1,
+  "Prefs_Snapping": 1,
+  "Prefs_StraightWires": 1,
+  "Prefs_SimPaused": true,
+  "Prefs_SimTargetStepsPerSecond": 10000,
+  "Prefs_SimStepsPerClockTick": 3,
+  "AllCustomChipNames": [
+    "INV",
+    "AND",
+    "OR",
+    "XOR",
+    "XNOR",
+    "NOR",
+    "AND3",
+    "AND4",
+    "OR_REDUCE8",
+    "DECODER4TO16",
+    "ENCODER16TO4",
+    "HEX7SEG",
+    "FULL_ADDER_1",
+    "ADDER_1",
+    "ADDER_2",
+    "ADDER_4",
+    "ADDER_8",
+    "ADDER_16",
+    "MUX2_1",
+    "MUX2_8",
+    "MUX8_1",
+    "MUX8_8",
+    "ZERO16",
+    "ALU16",
+    "OPCODE_DECODER",
+    "REGISTER_FILE_MANUAL",
+    "REGISTER_FILE_READ",
+    "REGISTER_FILE_NEXT",
+    "INC8",
+    "RESULT_MUX5_8",
+    "MISK16_CPU_STEP",
+    "MISK16_TESTBENCH"
+  ],
+  "StarredList": [
+    {
+      "Name": "00 \u00b7 Open this first",
+      "IsCollection": true
+    }
+  ],
+  "ChipCollections": [
+    {
+      "Name": "00 \u00b7 Open this first",
+      "Chips": [
+        "MISK16_TESTBENCH",
+        "MISK16_CPU_STEP"
+      ],
+      "IsToggledOpen": true
+    },
+    {
+      "Name": "01 \u00b7 Primitive logic",
+      "Chips": [
+        "INV",
+        "AND",
+        "OR",
+        "XOR",
+        "XNOR",
+        "NOR",
+        "AND3",
+        "AND4",
+        "OR_REDUCE8"
+      ],
+      "IsToggledOpen": false
+    },
+    {
+      "Name": "02 \u00b7 Adders",
+      "Chips": [
+        "FULL_ADDER_1",
+        "ADDER_1",
+        "ADDER_2",
+        "ADDER_4",
+        "ADDER_8",
+        "ADDER_16"
+      ],
+      "IsToggledOpen": false
+    },
+    {
+      "Name": "03 \u00b7 Word logic and tools",
+      "Chips": [
+        "MUX2_1",
+        "MUX2_8",
+        "MUX8_1",
+        "MUX8_8",
+        "ZERO16",
+        "ALU16",
+        "DECODER4TO16",
+        "ENCODER16TO4",
+        "HEX7SEG",
+        "RESULT_MUX5_8"
+      ],
+      "IsToggledOpen": false
+    },
+    {
+      "Name": "04 \u00b7 CPU",
+      "Chips": [
+        "OPCODE_DECODER",
+        "REGISTER_FILE_READ",
+        "REGISTER_FILE_NEXT",
+        "REGISTER_FILE_MANUAL",
+        "INC8",
+        "MISK16_CPU_STEP"
+      ],
+      "IsToggledOpen": false
+    }
+  ]
+}
